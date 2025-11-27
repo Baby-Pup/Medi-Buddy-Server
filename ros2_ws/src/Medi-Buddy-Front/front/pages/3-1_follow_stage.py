@@ -24,11 +24,19 @@ def get_base64_image(path):
 body_img = get_base64_image("assets/face_smile.png")
 
 def read_status():
-    if os.path.exists(FILE_PATH):
-        with open(FILE_PATH) as f:
-            data = json.load(f)
-        return data.get("status", "")
-    return ""
+    if not os.path.exists(FILE_PATH):
+        return ""
+
+    try:
+        with open(FILE_PATH, "r") as f:
+            txt = f.read().strip()
+            if not txt:
+                return ""
+            data = json.loads(txt)
+            return data.get("status", "")
+    except Exception:
+        # JSON이 깨졌거나, 쓰는 중이거나, parse 실패 → 기본값 반환
+        return ""
 
 
 status = read_status()
@@ -161,6 +169,7 @@ navigator.mediaDevices.getUserMedia({{
 </body>
 </html>
 """, height=770, scrolling=False)
+
 # ======= 자동 rerun =======
 time.sleep(0.08)
 st.rerun()

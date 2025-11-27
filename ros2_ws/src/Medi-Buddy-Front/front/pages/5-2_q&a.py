@@ -32,7 +32,7 @@ result = read_llm()
 # 마침표마다 줄바꿈 적용
 result_html = result.replace(".", ".<br><br>")
 
-elapsed = time.time() - st.session_state.ocr_complete_time
+elapsed = time.time() - st.session_state.question_start_time
 
 # ========== 6초 후 자동 페이지 이동 ==========
 if elapsed >= 10.0:

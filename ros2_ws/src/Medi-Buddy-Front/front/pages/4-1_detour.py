@@ -16,35 +16,23 @@ def get_base64_image(path):
     except:
         return None
 
-body_img = get_base64_image("assets/body_speechbubble.png")
+body_img = get_base64_image("assets/body_surprize.png")
 
-def read_status():
-    if not os.path.exists(FILE_PATH):
-        return ""
-
-    try:
-        with open(FILE_PATH, "r") as f:
-            txt = f.read().strip()
-            if not txt:
-                return ""
-            data = json.loads(txt)
-            return data.get("status", "")
-    except Exception:
-        # JSON이 깨졌거나, 쓰는 중이거나, parse 실패 → 기본값 반환
-        return ""
+def read_detour():
+    if os.path.exists(FILE_PATH):
+        with open(FILE_PATH) as f:
+            data = json.load(f)
+        return data.get("detour", "")
+    return ""
 
 
-status = read_status()
+detour = read_detour()
 
-elapsed = time.time() - st.session_state.ocr_start_time
+elapsed = time.time() - st.session_state.detour_start_time
 
-# ========== 2초 후 자동 페이지 이동 ==========
-if elapsed >= 8.0:
-    st.switch_page("pages/2-3_drug_ocr.py")
-
-if status == "ocr_complete":
-    # 즉시 3-3_follow_stage 로 전환
-    st.switch_page("pages/7_null.py")
+# ========== 4초 후 자동 페이지 이동 ==========
+if elapsed >= 4.0:
+    st.switch_page("pages/1_map.py")
 
 # =============================
 # CSS (캐릭터 위로 이동 + 박스 확대 + 위치 조정)
@@ -104,7 +92,7 @@ st.html(f"""
 
     <!-- 텍스트 박스 -->
     <div class="bottom-box">
-        카메라로 찍어갈게요! 약을 미리 준비해주세요.
+        {detour}이 가고 싶으신가요? 안내 해드릴게요.
     </div>
 
 </div>

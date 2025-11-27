@@ -27,11 +27,19 @@ def get_base64_image(path):
 body_img = get_base64_image("assets/body_surprize.png")
 
 def read_name():
-    if os.path.exists(FILE_PATH):
-        with open(FILE_PATH) as f:
-            data = json.load(f)
-        return data.get("client_name", "")
-    return ""
+    if not os.path.exists(FILE_PATH):
+        return ""
+
+    try:
+        with open(FILE_PATH, "r") as f:
+            txt = f.read().strip()
+            if not txt:
+                return ""
+            data = json.loads(txt)
+            return data.get("client_name", "")
+    except Exception:
+        # JSON이 깨졌거나, 쓰는 중이거나, parse 실패 → 기본값 반환
+        return ""
 
 
 name = read_name()

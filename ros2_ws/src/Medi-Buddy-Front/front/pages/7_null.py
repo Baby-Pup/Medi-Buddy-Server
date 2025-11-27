@@ -1,5 +1,6 @@
 import streamlit as st
 import base64
+import time
 
 st.set_page_config(layout="wide")
 
@@ -14,6 +15,12 @@ def get_base64_image(path):
 body_img = get_base64_image("assets/body_book.png")
 speechbubble_img = get_base64_image("assets/text_bubble.png")
 
+elapsed = time.time() - st.session_state.null_start_time
+
+# ========== 4초 후 자동 페이지 이동 ==========
+if elapsed >= 3.0:
+    st.switch_page("pages/1_map.py")
+
 # =============================
 # CSS
 # =============================
@@ -24,6 +31,7 @@ st.markdown("""
 * { font-family: "Jua", sans-serif !important; }
 
 .stApp { background-color: #102A4C !important; }
+header, .stToolbar { display: none !important; }
 
 /* 전체 래퍼: 화면 중앙에 배치 */
 .page-wrapper {
@@ -100,3 +108,7 @@ st.html(f"""
 
 </div>
 """)
+
+# ========== 자동 rerun ==========
+time.sleep(0.08)
+st.rerun()

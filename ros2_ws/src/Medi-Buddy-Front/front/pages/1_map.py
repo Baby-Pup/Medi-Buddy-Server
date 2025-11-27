@@ -22,25 +22,49 @@ small_buddy = get_base64_image("assets/body_flag.png")  # 지도 위 작은 캐�
 map_img = get_base64_image("assets/map_line.png")
 
 def read_name():
-    if os.path.exists(FILE_PATH):
-        with open(FILE_PATH) as f:
-            data = json.load(f)
-        return data.get("client_name", "")
-    return ""
+    if not os.path.exists(FILE_PATH):
+        return ""
+
+    try:
+        with open(FILE_PATH, "r") as f:
+            txt = f.read().strip()
+            if not txt:
+                return ""
+            data = json.loads(txt)
+            return data.get("client_name", "")
+    except Exception:
+        # JSON이 깨졌거나, 쓰는 중이거나, parse 실패 → 기본값 반환
+        return ""
 
 def read_destinations():
-    if os.path.exists(FILE_PATH):
-        with open(FILE_PATH) as f:
-            data = json.load(f)
-        return data.get("destinations", "")
-    return ""
+    if not os.path.exists(FILE_PATH):
+        return ""
+
+    try:
+        with open(FILE_PATH, "r") as f:
+            txt = f.read().strip()
+            if not txt:
+                return ""
+            data = json.loads(txt)
+            return data.get("destinations", "")
+    except Exception:
+        # JSON이 깨졌거나, 쓰는 중이거나, parse 실패 → 기본값 반환
+        return ""
 
 def read_status():
-    if os.path.exists(FILE_PATH):
-        with open(FILE_PATH) as f:
-            data = json.load(f)
-        return data.get("status", "")
-    return ""
+    if not os.path.exists(FILE_PATH):
+        return ""
+
+    try:
+        with open(FILE_PATH, "r") as f:
+            txt = f.read().strip()
+            if not txt:
+                return ""
+            data = json.loads(txt)
+            return data.get("status", "")
+    except Exception:
+        # JSON이 깨졌거나, 쓰는 중이거나, parse 실패 → 기본값 반환
+        return ""
 
 
 name = read_name()

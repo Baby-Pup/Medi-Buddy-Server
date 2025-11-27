@@ -14,6 +14,12 @@ def get_base64_image(path):
 
 body_img = get_base64_image("assets/body_surprize.png")
 
+elapsed = time.time() - st.session_state.ocr_start_time
+
+# ========== 2초 후 자동 페이지 이동 ==========
+if elapsed >= 4.0:
+    st.switch_page("pages/2-2_drug_ocr.py")
+
 # =============================
 # CSS (캐릭터 위로 이동 + 박스 확대 + 위치 조정)
 # =============================
@@ -25,6 +31,7 @@ st.markdown("""
 * { font-family: "Jua", sans-serif !important; }
 
 .stApp { background-color: #102A4C !important; }
+header, .stToolbar { display: none !important; }
 
 /* 전체 높이는 유지하되 캐릭터/박스를 조금 위로 이동 */
 .page-wrapper {
@@ -76,3 +83,7 @@ st.html(f"""
 
 </div>
 """)
+
+# ========== 자동 rerun ==========
+time.sleep(0.08)
+st.rerun()
