@@ -71,6 +71,8 @@ def llm(sys_message, query):
             {"role": "user", "content": query}
         ]
     ).choices[0].message.content
+
+    llm_pub_node.publish_result(re)
     return re
 
 
@@ -132,7 +134,7 @@ def tree(voice):
                     break
 
         case 2:
-            status_pub_node.publish_status("ocr")
+            status_pub_node.publish_status("ocr_start")
             sys_message = "사용자의 문서를 3문장으로 요약하고 쉬운 말로 설명해주세요."
 
             ocr_pub_node.publish_request()
@@ -151,12 +153,12 @@ def tree(voice):
             message = llm(sys_message, query=OCR_result)
 
         case 3:
-            status_pub_node.publish_status("question")
+            status_pub_node.publish_status("question_drug")
             sys_message = "약 정보를 효능, 부작용, 주의 사항 중심으로 3문장의 쉬운 말로 설명해주세요."
             message = llm(sys_message, query=voice)
 
         case 4:
-            status_pub_node.publish_status("question")
+            status_pub_node.publish_status("question_disease")
             sys_message = "질병 정보를 3문장의 쉬운 말로 설명해주세요."
             message = llm(sys_message, query=voice)
 
@@ -197,9 +199,8 @@ class VoiceRouterNode(Node):
 
     def callback_received_mp3(self, msg):
         try:
-            timestamp = int(time.time())
-            mp3_path = f"/tmp/received_{timestamp}.mp3"
-            wav_path = f"/tmp/received_{timestamp}.wav"
+            mp3_path = f"/tmp/received.mp3"
+            wav_path = f"/tmp/received.wav"
 
             # Base64 → MP3 저장
             mp3_bytes = base64.b64decode(msg.data)
@@ -261,10 +262,38 @@ class StatusPublisher(Node):
         self.get_logger().info(f"📤 Robot Status Published: {text}")
 
 ########################################################
-# 8. ROS2 실행
+# 9. LlmResultPublisher노드 실행
+########################################################
+class LlmResultPublisher(Node):
+    def __init__(self):
+        super().__init__("llm_result_publisher")
+        self.pub = self.create_publisher(String, "llm_result", 10)
+
+    def publish_result(self, text):
+        msg = String()
+        msg.data = text
+        self.pub.publish(msg)
+        self.get_logger().info(f"📤 LLM Result Published: {text[:50]}...")
+
+########################################################
+# 10. LlmResultPublisher노드 실행
+########################################################
+class DetourPublisher(Node):
+    def __init__(self):
+        super().__init__("detour_publisher")
+        self.pub = self.create_publisher(String, "detour", 10)
+
+    def publish_result(self, text):
+        msg = String()
+        msg.data = text
+        self.pub.publish(msg)
+        self.get_logger().info(f"📤 Detour Published: {text}...")
+
+########################################################
+# 11. ROS2 실행
 ########################################################
 def main(args=None):
-    global tts_pub_node, ocr_pub_node, status_pub_node
+    global tts_pub_node, ocr_pub_node, status_pub_node, llm_pub_node, detour_pub_node
 
     rclpy.init(args=args)
 
@@ -272,12 +301,16 @@ def main(args=None):
     tts_pub_node = TtsPublisher()
     ocr_pub_node = OcrRequestPublisher()
     status_pub_node = StatusPublisher()
+    llm_pub_node = LlmResultPublisher()
+    detour_pub_node = LlmResultPublisher()
 
     executor = rclpy.executors.MultiThreadedExecutor()
     executor.add_node(voice_node)
     executor.add_node(tts_pub_node)
     executor.add_node(ocr_pub_node)
     executor.add_node(status_pub_node)
+    executor.add_node(llm_pub_node)
+    executor.add_node(detour_pub_node)
 
     try:
         executor.spin()
@@ -286,6 +319,10 @@ def main(args=None):
     finally:
         voice_node.destroy_node()
         tts_pub_node.destroy_node()
+        ocr_pub_node.destroy_node()
+        status_pub_node.destroy_node()
+        llm_pub_node.destroy_node()
+        detour_pub_node.destroy_node()
         rclpy.shutdown()
 
 

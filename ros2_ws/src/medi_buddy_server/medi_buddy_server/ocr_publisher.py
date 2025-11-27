@@ -114,8 +114,9 @@ class OcrNode(Node):
 
         # publishers / subscribers
         self.create_subscription(Bool, "/ocr_request", self.ocr_request_callback, 10)
-        self.create_subscription(Image, "/camera/image_raw", self.image_callback, 5)
+        self.image_sub = None
         self.ocr_result_pub = self.create_publisher(String, "/ocr_result", 10)
+        self.status_pub = self.create_publisher(String, '/robot_status', 10)
 
         # PaddleOCR 초기화 (무거우니 한 번만)
         self.get_logger().info("⚙️ PaddleOCR 초기화 중 (cpu)...")
@@ -132,11 +133,26 @@ class OcrNode(Node):
 
     # /ocr_request 토픽 핸들러
     def ocr_request_callback(self, msg: Bool):
-        self.ocr_request = bool(msg.data)
-        if self.ocr_request:
-            self.get_logger().info("▶ /ocr_request = True: 다음 수신 프레임에서 OCR 수행")
-        else:
-            self.get_logger().info("■ /ocr_request = False: OCR 비활성화")
+        requested = bool(msg.data)
+
+        # 요청 ON → 구독 시작
+        if requested and not self.ocr_request:
+            self.get_logger().info("▶ /ocr_request = True → /camera/image_raw 구독 시작")
+            self.image_sub = self.create_subscription(
+                Image,
+                "/camera/image_raw",
+                self.image_callback,
+                10
+            )
+
+        # 요청 OFF → 구독 해제
+        elif not requested and self.ocr_request:
+            self.get_logger().info("■ /ocr_request = False → /camera/image_raw 구독 중지")
+            if self.image_sub:
+                self.destroy_subscription(self.image_sub)
+                self.image_sub = None
+
+        self.ocr_request = requested
 
     # 이미지 콜백: ocr_request이 True일 때 한 프레임만 처리하고 리셋
     def image_callback(self, msg: Image):
@@ -184,6 +200,12 @@ class OcrNode(Node):
             msg_out.data = json.dumps(output, ensure_ascii=False)
             self.ocr_result_pub.publish(msg_out)
             self.get_logger().info(f"✅ OCR 결과 발행 (/ocr_result). items={len(items)}, brand={output['brand_name']}")
+
+            # publish status
+            status_msg = String()
+            status_msg.data = "ocr_complete"
+            self.status_pub.publish(status_msg)
+            self.get_logger().info("📡 상태 전송: ocr_complete")
 
         except Exception as e:
             self.get_logger().error(f"❌ OCR 처리 중 예외 발생: {e}")
