@@ -84,7 +84,7 @@ tts = TTS()
 
 
 ########################################################
-# 4-A. TTS Publisher 노드 (Base64 WAV 발행)
+# 4. TTS Publisher 노드 (Base64 WAV 발행)
 ########################################################
 class TtsPublisher(Node):
     def __init__(self):
@@ -113,7 +113,7 @@ tts_pub_node = None
 
 
 ########################################################
-# 4-B. 트리 라우팅 (make_and_play 제거)
+# 5. 트리 라우팅 (make_and_play 제거)
 ########################################################
 def tree(voice):
     mode = predict(voice)['label']
@@ -126,11 +126,12 @@ def tree(voice):
 
         case 1:
             status_pub_node.publish_status("detour")
-            rooms = ['X-ray실', '물리치료실', '채혈실', '척추센터', '수납', '화장실']
+            rooms = ['X-ray실', '응급실', '채혈실', '약국', '수납', '화장실']
             message = "안내할 수 있는 장소를 찾지 못했습니다"
             for r in rooms:
                 if r in voice:
                     message = f"{r} 안내를 시작합니다"
+                    detour_pub_node.publish_destination(r)
                     break
 
         case 2:
@@ -174,14 +175,7 @@ def tree(voice):
 
 
 ########################################################
-# 5. Whisper 모델 (STT)
-########################################################
-from medi_buddy_server.modules.stt import RMS_VAD
-stt = RMS_VAD()
-
-
-########################################################
-# 6. ROS2: MP3 → STT → Intent
+# 6. ROS2: MP3 → WAV → OpenAI STT → Intent
 ########################################################
 class VoiceRouterNode(Node):
     def __init__(self):
@@ -194,13 +188,15 @@ class VoiceRouterNode(Node):
             10
         )
 
-        self.get_logger().info("🎧 Voice Router Node Started (MP3 → STT → Intent → LLM → TTS)")
+        self.client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
+
+        self.get_logger().info("🎧 Voice Router Node Started (MP3 → OpenAI STT → Intent → LLM → TTS)")
 
 
     def callback_received_mp3(self, msg):
         try:
-            mp3_path = f"/tmp/received.mp3"
-            wav_path = f"/tmp/received.wav"
+            mp3_path = "/tmp/received.mp3"
+            wav_path = "/tmp/received.wav"
 
             # Base64 → MP3 저장
             mp3_bytes = base64.b64decode(msg.data)
@@ -217,15 +213,24 @@ class VoiceRouterNode(Node):
                 wav_path
             ], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
 
-            # WAV → numpy
-            audio_np, sr = sf.read(wav_path, dtype="float32")
+            self.get_logger().info("🎵 WAV 변환 완료")
 
-            # Whisper STT
-            text, infer_time = stt.transcribe(audio_np)
-            self.get_logger().info(f"📝 STT 결과: {text}")
+            # ---- 🔥 OpenAI API로 STT 수행 ----
+            with open(wav_path, "rb") as audio_file:
+                start_t = time.time()
+                voice = self.client.audio.transcriptions.create(
+                    model='gpt-4o-mini-transcribe',
+                    file=audio_file,
+                    response_format='text',
+                    language='ko'
+                )
+                duration = time.time() - start_t
 
-            # Intent + LLM + TTS
-            mode, message = tree(text)
+            self.get_logger().info(f"📝 STT 결과: {voice}")
+            self.get_logger().info(f"⏱ STT 처리 시간: {duration:.2f}s")
+
+            # ---- Intent + LLM + TTS ----
+            mode, message = tree(voice)
             self.get_logger().info(f"분류 결과: {mode}")
             self.get_logger().info(f"📝 TTS 결과: {message}")
 
@@ -276,14 +281,14 @@ class LlmResultPublisher(Node):
         self.get_logger().info(f"📤 LLM Result Published: {text[:50]}...")
 
 ########################################################
-# 10. LlmResultPublisher노드 실행
+# 10. DetourPublisher 실행
 ########################################################
 class DetourPublisher(Node):
     def __init__(self):
         super().__init__("detour_publisher")
         self.pub = self.create_publisher(String, "detour", 10)
 
-    def publish_result(self, text):
+    def publish_destination(self, text):
         msg = String()
         msg.data = text
         self.pub.publish(msg)
@@ -302,7 +307,7 @@ def main(args=None):
     ocr_pub_node = OcrRequestPublisher()
     status_pub_node = StatusPublisher()
     llm_pub_node = LlmResultPublisher()
-    detour_pub_node = LlmResultPublisher()
+    detour_pub_node = DetourPublisher()
 
     executor = rclpy.executors.MultiThreadedExecutor()
     executor.add_node(voice_node)
