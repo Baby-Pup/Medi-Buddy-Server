@@ -23,11 +23,13 @@ class StatusSubscriber(Node):
 
         # 현재 상태 값들
         self.current_status = "idle"
-        self.current_destinations = ""
+        self.destinations = ""
         self.current_client_name = ""
         self.current_ocr_brand_name = ""
         self.current_llm_result = ""
         self.detour = ""
+        self.current_date = ""
+        self.current_destination = "s"
 
         # ---- 토픽 구독 ----
         self.create_subscription(String, '/robot_status', self.status_callback, 10)
@@ -36,6 +38,8 @@ class StatusSubscriber(Node):
         self.create_subscription(String, '/ocr_result', self.ocr_result_callback, 10)
         self.create_subscription(String, '/llm_result', self.llm_result_callback, 10)
         self.create_subscription(String, '/detour', self.detour_callback, 10)
+        self.create_subscription(String, '/date', self.date_callback, 10)
+        self.create_subscription(String, '/current_destination', self.current_destination_callback, 10)
 
         self.write_json()
         self.get_logger().info("Status listener ready.")
@@ -46,11 +50,13 @@ class StatusSubscriber(Node):
     def write_json(self):
         data = {
             "status": self.current_status,
-            "destinations": self.current_destinations,
+            "destinations": self.destinations,
             "client_name": self.current_client_name,
             "ocr_brand_name": self.current_ocr_brand_name,
             "llm_result": self.current_llm_result,
             "detour": self.detour,
+            "date": self.current_date,
+            "current_destination": self.current_destination,
         }
         atomic_write_json(FILE_PATH, data)
 
@@ -66,9 +72,9 @@ class StatusSubscriber(Node):
         threading.Thread(target=self.reset_status, daemon=True).start()
 
     def destination_callback(self, msg):
-        self.current_destinations = msg.data
+        self.destinations = msg.data
         self.write_json()
-        self.get_logger().info(f"[WRITE] destinations: {self.current_destinations}")
+        self.get_logger().info(f"[WRITE] destinations: {self.destinations}")
 
     def client_name_callback(self, msg):
         self.current_client_name = msg.data
@@ -93,6 +99,16 @@ class StatusSubscriber(Node):
         self.detour = msg.data
         self.write_json()
         self.get_logger().info(f"[WRITE] detour: {self.detour}")
+
+    def date_callback(self, msg):
+        self.current_date = msg.data
+        self.write_json()
+        self.get_logger().info(f"[WRITE] date: {self.current_date}")
+
+    def current_destination_callback(self, msg):
+        self.current_destination = msg.data
+        self.write_json()
+        self.get_logger().info(f"[WRITE] current destination: {self.current_destination}")
 
     # -------------------------------
     # idle reset
