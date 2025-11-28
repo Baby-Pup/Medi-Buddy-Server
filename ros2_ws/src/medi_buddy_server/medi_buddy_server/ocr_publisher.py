@@ -2,7 +2,6 @@
 import os
 os.environ["QT_QPA_PLATFORM"] = "xcb"
 
-import json
 import cv2
 import numpy as np
 from paddleocr import PaddleOCR
@@ -15,33 +14,26 @@ from rclpy.node import Node
 
 # 설정값
 CONFIDENCE_THRESHOLD = 0.3
-DETECT_BRAND_NAME = True
-FONT_PATH = "/usr/share/fonts/truetype/nanum/NanumGothic.ttf"  # 필요시 사용 (현재 랜더는 없음)
+FONT_PATH = "/usr/share/fonts/truetype/nanum/NanumGothic.ttf"
 
-# ---------------- utility (기존 로직에서 OCR 가공 부분만 그대로 사용) ----------------
+
+# ---------------- OCR utility ----------------
 
 def extract_ocr_data_from_result(result):
-    """PaddleOCR 결과에서 bbox, text, score 리스트로 변환"""
     ocr_data = []
     if not result:
         return ocr_data
 
-    # result 형식은 사용한 paddleocr 버전에 따라 다를 수 있음.
-    # 사용자 제공 코드에 맞춰 .get('dt_polys') 스타일을 먼저 시도하고, 없으면 기본 포맷(ocr 결과)을 처리.
     for res in result:
-        # res이 dict 스타일일 경우
         if isinstance(res, dict):
             dt_polys = res.get('dt_polys')
             rec_texts = res.get('rec_texts')
             rec_scores = res.get('rec_scores')
         else:
-            # PaddleOCR의 ocr(...) 반환 포맷일 경우: list of [bbox, (text, score)]
-            # 예: [ [[x1,y1],[x2,y2],...], ('텍스트', 0.98) ]
             dt_polys = None
             rec_texts = []
             rec_scores = []
             try:
-                # res이 list 형태로 여러 검출을 담고 있는 경우
                 for entry in res:
                     if isinstance(entry, list) and len(entry) == 2:
                         bbox = entry[0]
@@ -55,7 +47,6 @@ def extract_ocr_data_from_result(result):
         if dt_polys is None or rec_texts is None:
             continue
 
-        # numpy -> py list 처리
         if hasattr(dt_polys, 'tolist'):
             dt_polys = dt_polys.tolist()
         if hasattr(rec_scores, 'tolist'):
@@ -69,7 +60,6 @@ def extract_ocr_data_from_result(result):
 
 
 def find_brand_name(ocr_data, image_shape):
-    """가장 큰(높이 기반) 텍스트를 약품명 후보로 반환"""
     if not ocr_data:
         return None
 
@@ -81,17 +71,15 @@ def find_brand_name(ocr_data, image_shape):
         bbox = np.array(item['bbox'])
         text = item['text']
 
-        # bbox 높이
         box_height = np.max(bbox[:, 1]) - np.min(bbox[:, 1])
 
-        # 1글자 노이즈 제거 (단, 이미지 높이의 20% 이상이면 예외)
         if len(text) < 2 and box_height < (img_h * 0.2):
             continue
-        # 너무 긴 문장 제거
         if len(text) > 50:
             continue
 
         score = box_height ** 2
+
         if "제품명" in text:
             score *= 1.2
 
@@ -102,42 +90,45 @@ def find_brand_name(ocr_data, image_shape):
 
     return brand_info
 
-# ------------------------------- ROS2 Node -------------------------------
+
+# ---------------- ROS2 Node ----------------
 
 class OcrNode(Node):
     def __init__(self):
         super().__init__("ocr_node")
 
-        # 상태
-        self.ocr_request = False  # /ocr_request가 True일 때만 처리 (처리 후 자동 리셋)
+        self.ocr_request = False
         self.bridge = CvBridge()
 
-        # publishers / subscribers
+        # 요청사항 반영: 초기 스킵 프레임 개수 수정
+        self.skip_frames = 2          
+        self.frame_counter = 0        
+        self.brand_votes = {}         
+        self.required_votes = 3       
+
+        # ROS 설정
         self.create_subscription(Bool, "/ocr_request", self.ocr_request_callback, 10)
         self.image_sub = None
         self.ocr_result_pub = self.create_publisher(String, "/ocr_result", 10)
         self.status_pub = self.create_publisher(String, '/robot_status', 10)
 
-        # PaddleOCR 초기화 (무거우니 한 번만)
-        self.get_logger().info("⚙️ PaddleOCR 초기화 중 (cpu)...")
-        try:
-            self.ocr = PaddleOCR(use_angle_cls=False, lang="korean", device="cpu")
-            # 사용환경에 따라: PaddleOCR(..., use_angle_cls=True) 등 옵션 조절 가능
-        except Exception as e:
-            self.get_logger().error(f"❌ PaddleOCR 초기화 실패: {e}")
-            raise
+        # OCR 초기화
+        self.get_logger().info("⚙️ OCR 초기화 중...")
+        self.ocr = PaddleOCR(use_angle_cls=False, lang="korean", device="cpu")
 
-        # 내부 프레임 카운터 (과부하 방지용)
-        self._frame_idx = 0
-        self.get_logger().info("📸 OCR Node Ready - waiting for /ocr_request (Bool)")
+        self.get_logger().info("📸 OCR Node Ready - waiting for /ocr_request")
 
-    # /ocr_request 토픽 핸들러
+    # ---------------- ocr_request ----------------
     def ocr_request_callback(self, msg: Bool):
         requested = bool(msg.data)
 
-        # 요청 ON → 구독 시작
         if requested and not self.ocr_request:
-            self.get_logger().info("▶ /ocr_request = True → /camera/image_raw 구독 시작")
+            self.get_logger().info("▶ OCR 요청 ON → 카메라 구독 시작")
+
+            # 초기화
+            self.frame_counter = 0
+            self.brand_votes = {}
+
             self.image_sub = self.create_subscription(
                 Image,
                 "/camera/image_raw",
@@ -145,77 +136,74 @@ class OcrNode(Node):
                 10
             )
 
-        # 요청 OFF → 구독 해제
-        elif not requested and self.ocr_request:
-            self.get_logger().info("■ /ocr_request = False → /camera/image_raw 구독 중지")
+        self.ocr_request = requested
+
+    # ---------------- image callback ----------------
+    def image_callback(self, msg: Image):
+        if not self.ocr_request:
+            return
+
+        cv_image = self.bridge.imgmsg_to_cv2(msg, desired_encoding="bgr8")
+        self.frame_counter += 1
+
+        # 1) 초기 2프레임 스킵
+        if self.frame_counter <= self.skip_frames:
+            self.get_logger().info(f"⏭ 초기 프레임 스킵 {self.frame_counter}/{self.skip_frames}")
+            return
+
+        # 2) 흐린 이미지 체크 제거됨
+
+        # 3) OCR 수행
+        self.get_logger().info("🔍 OCR 수행 중...")
+        try:
+            result = self.ocr.predict(input=cv_image)
+        except Exception:
+            result = self.ocr.ocr(cv_image, cls=False)
+
+        ocr_data = extract_ocr_data_from_result(result)
+        brand_info = find_brand_name(ocr_data, cv_image.shape)
+        brand = brand_info['text'] if brand_info else ""
+
+        if not brand:
+            self.get_logger().info("❗ 텍스트 없음 → 다음 프레임")
+            return
+
+        self.get_logger().info(f"📌 검출 브랜드: {brand}")
+
+        # 4) 브랜드 투표 집계
+        self.brand_votes[brand] = self.brand_votes.get(brand, 0) + 1
+
+        # 5) 기준 이상 반복 검출 → 확정
+        if self.brand_votes[brand] >= self.required_votes:
+            self.get_logger().info(f"🏆 브랜드 확정: {brand}")
+
+            msg_out = String()
+            msg_out.data = brand
+            self.ocr_result_pub.publish(msg_out)
+
+            status_msg = String()
+            status_msg.data = "ocr_complete"
+            self.status_pub.publish(status_msg)
+
+            # 구독 종료
             if self.image_sub:
                 self.destroy_subscription(self.image_sub)
                 self.image_sub = None
 
-        self.ocr_request = requested
-
-    # 이미지 콜백: ocr_request이 True일 때 한 프레임만 처리하고 리셋
-    def image_callback(self, msg: Image):
-        # 요청이 없으면 바로 리턴
-        if not self.ocr_request:
+            self.ocr_request = False
             return
 
-        try:
-            # ROS Image -> OpenCV BGR
-            cv_image = self.bridge.imgmsg_to_cv2(msg, desired_encoding="bgr8")
-
-            # OCR 수행 (이미지 크기/프레임 건너뛰기 정책은 필요시 조절)
-            self.get_logger().info("🔍 OCR 수행 시작")
-            # PaddleOCR의 반환 포맷은 버전에 따라 다름. 사용하던 predict 방식도 가능하면 그걸 쓰도록 시도.
-            try:
-                result = self.ocr.predict(input=cv_image)
-            except Exception:
-                # fallback to ocr.ocr(...) 포맷
-                result = self.ocr.ocr(cv_image, cls=False)
-
-            ocr_data = extract_ocr_data_from_result(result)
-            brand_info = find_brand_name(ocr_data, cv_image.shape) if DETECT_BRAND_NAME else None
-
-            # 결과 JSON 구성
-            items = []
-            for it in ocr_data:
-                # bbox를 직렬화 가능한 형식으로 변환 (list of [x,y])
-                bbox = [[float(p[0]), float(p[1])] for p in it['bbox']]
-                items.append({
-                    "text": it['text'],
-                    "score": float(it['score']),
-                    "bbox": bbox
-                })
-
-            output = {
-                "brand_name": brand_info['text'] if brand_info else None,
-                "brand_score": float(brand_info['score']) if (brand_info and 'score' in brand_info) else None,
-                "brand_ranking_score": float(brand_info['ranking_score']) if (brand_info and 'ranking_score' in brand_info) else None,
-                "items": items
-            }
-
-            # publish JSON string
-            msg_out = String()
-            print(msg_out)
-            msg_out.data = json.dumps(output, ensure_ascii=False)
-            self.ocr_result_pub.publish(msg_out)
-            self.get_logger().info(f"✅ OCR 결과 발행 (/ocr_result). items={len(items)}, brand={output['brand_name']}")
-
-            # publish status
-            status_msg = String()
-            status_msg.data = "ocr_complete"
-            self.status_pub.publish(status_msg)
-            self.get_logger().info("📡 상태 전송: ocr_complete")
-
-        except Exception as e:
-            self.get_logger().error(f"❌ OCR 처리 중 예외 발생: {e}")
-
-        finally:
-            # 한 번 처리했으면 자동 리셋: 다음 /ocr_request가 True가 될 때까지 처리 안 함
+        # 6) 최대 프레임 제한
+        if self.frame_counter >= 15:
+            self.get_logger().info("⛔ 최대 프레임 초과 → OCR 실패 처리")
             self.ocr_request = False
-            self.get_logger().info("⏸ OCR request 자동 리셋 (ocr_request=False)")
 
-# ------------------------------- main -------------------------------
+            if self.image_sub:
+                self.destroy_subscription(self.image_sub)
+                self.image_sub = None
+
+
+# ---------------- main ----------------
 
 def main(args=None):
     rclpy.init(args=args)
@@ -227,6 +215,7 @@ def main(args=None):
     finally:
         node.destroy_node()
         rclpy.shutdown()
+
 
 if __name__ == "__main__":
     main()
