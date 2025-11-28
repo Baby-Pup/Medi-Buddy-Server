@@ -33,7 +33,6 @@ label_names = {
     4: "의료정보"
 }
 
-
 def predict(text):
     inputs = tokenizer(
         text,
@@ -64,10 +63,7 @@ def llm(sys_message, query):
     re = client.chat.completions.create(
         model='gpt-3.5-turbo',
         messages=[
-            {
-                "role": "system",
-                "content": "당신은 의료 지원 로봇 Medi-Buddy입니다." + sys_message
-            },
+            {"role": "system", "content": "당신은 의료 지원 로봇 Medi-Buddy입니다." + sys_message},
             {"role": "user", "content": query}
         ]
     ).choices[0].message.content
@@ -77,14 +73,14 @@ def llm(sys_message, query):
 
 
 ########################################################
-# 3. TTS (기존 시스템 사용)
+# 3. TTS
 ########################################################
 from medi_buddy_server.modules.tts import TTS
 tts = TTS()
 
 
 ########################################################
-# 4. TTS Publisher 노드 (Base64 WAV 발행)
+# 4. TTS Publisher
 ########################################################
 class TtsPublisher(Node):
     def __init__(self):
@@ -108,18 +104,46 @@ class TtsPublisher(Node):
             self.get_logger().error(f"❌ TTS publish 오류: {e}")
 
 
-# 전역 변수로 선언 (tree()에서 사용)
 tts_pub_node = None
 
 
+
 ########################################################
-# 5. 트리 라우팅 (make_and_play 제거)
+# 🔵 5. OCR 결과 구독 (추가)
+########################################################
+
+### 🔵 현재 OCR 텍스트 저장소
+latest_ocr_text = None
+
+class OcrResultSubscriber(Node):
+    def __init__(self):
+        super().__init__("ocr_result_subscriber")
+        self.subscription = self.create_subscription(
+            String,
+            "ocr_result",
+            self.callback_ocr_result,
+            10
+        )
+        self.get_logger().info("📥 OCR 결과 구독 시작 (/ocr_result)")
+
+    def callback_ocr_result(self, msg):
+        global latest_ocr_text
+        latest_ocr_text = msg.data
+        self.get_logger().info(f"📌 OCR 결과 수신: {latest_ocr_text}")
+
+
+
+########################################################
+# 6. 트리 라우팅
 ########################################################
 def tree(voice):
+    global latest_ocr_text
+
     mode = predict(voice)['label']
     print("분류 결과:", mode)
 
     match mode:
+
         case 0:
             status_pub_node.publish_status("null")
             message = "제가 답변드릴 수 없을 것 같아요"
@@ -136,22 +160,27 @@ def tree(voice):
 
         case 2:
             status_pub_node.publish_status("ocr_start")
-            sys_message = "사용자의 문서를 3문장으로 요약하고 쉬운 말로 설명해주세요."
 
+            ### OCR 노드 트리거
             ocr_pub_node.publish_request()
 
-            # TTS 파일 생성 후 publish
+            ### TTS 안내
             guide_path = tts.make_tts("원하는 문서를 보여주세요")
             tts_pub_node.publish_wav(guide_path)
             print("추가 텍스트:", "원하는 문서를 보여주세요")
 
-            OCR_result = """
-            1. 본 시술은 다양한 급성 및 만성 통증을 완화하고 치료하기 위해 시행됩니다.
-            2. 경막외 카테터 삽입술을 시행하지 않을 경우 효과적인 통증 관리가 어려울 수 있습니다.
-            3. 시술 과정은 다음과 같습니다...
-            """
+            ### OCR 텍스트가 들어올 때까지 기다림
+            #    - 비동기 ROS 구조에서 polling 방식으로
+            wait_t = 0
+            while latest_ocr_text is None and wait_t < 10:
+                time.sleep(0.2)
+                wait_t += 0.2
 
-            message = llm(sys_message, query=OCR_result)
+            if latest_ocr_text is None:
+                message = "문서를 인식하지 못했습니다."
+            else:
+                sys_message = "약 정보를 효능, 부작용, 주의 사항 중심으로 3문장의 쉬운 말로 설명해주세요.ㄴ"
+                message = llm(sys_message, query=latest_ocr_text)
 
         case 3:
             status_pub_node.publish_status("question_drug")
@@ -166,16 +195,16 @@ def tree(voice):
         case _:
             message = "처리할 수 없는 요청입니다"
 
-    print("🧠 LLM 결과 텍스트:", message)
-
+    # 최종 음성 안내
     wav_path = tts.make_tts(message)
     tts_pub_node.publish_wav(wav_path)
 
     return mode, message
 
 
+
 ########################################################
-# 6. ROS2: MP3 → WAV → OpenAI STT → Intent
+# 7. STT 노드
 ########################################################
 class VoiceRouterNode(Node):
     def __init__(self):
@@ -189,23 +218,19 @@ class VoiceRouterNode(Node):
         )
 
         self.client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
-
-        self.get_logger().info("🎧 Voice Router Node Started (MP3 → OpenAI STT → Intent → LLM → TTS)")
-
+        self.get_logger().info("🎧 Voice Router Node Started")
 
     def callback_received_mp3(self, msg):
         try:
             mp3_path = "/tmp/received.mp3"
             wav_path = "/tmp/received.wav"
 
-            # Base64 → MP3 저장
             mp3_bytes = base64.b64decode(msg.data)
             with open(mp3_path, "wb") as f:
                 f.write(mp3_bytes)
 
             self.get_logger().info(f"💾 MP3 저장완료: {mp3_path}")
 
-            # MP3 → WAV 변환
             subprocess.run([
                 "ffmpeg", "-y", "-i", mp3_path,
                 "-ar", "16000",
@@ -215,7 +240,6 @@ class VoiceRouterNode(Node):
 
             self.get_logger().info("🎵 WAV 변환 완료")
 
-            # ---- 🔥 OpenAI API로 STT 수행 ----
             with open(wav_path, "rb") as audio_file:
                 start_t = time.time()
                 voice = self.client.audio.transcriptions.create(
@@ -229,17 +253,14 @@ class VoiceRouterNode(Node):
             self.get_logger().info(f"📝 STT 결과: {voice}")
             self.get_logger().info(f"⏱ STT 처리 시간: {duration:.2f}s")
 
-            # ---- Intent + LLM + TTS ----
             mode, message = tree(voice)
-            self.get_logger().info(f"분류 결과: {mode}")
-            self.get_logger().info(f"📝 TTS 결과: {message}")
 
         except Exception as e:
             self.get_logger().error(f"❌ 오류 발생: {e}")
 
 
 ########################################################
-# 7. OCR노드  실행
+# 8. ROS2 Utility 노드들
 ########################################################
 class OcrRequestPublisher(Node):
     def __init__(self):
@@ -250,11 +271,9 @@ class OcrRequestPublisher(Node):
         msg = Bool()
         msg.data = True
         self.pub.publish(msg)
-        self.get_logger().info("📤 OCR 요청 신호 발행 (ocr_request=True)")
+        self.get_logger().info("📤 OCR 요청 신호 발행")
 
-########################################################
-# 8. StatusPublisher노드 실행
-########################################################
+
 class StatusPublisher(Node):
     def __init__(self):
         super().__init__("status_publisher")
@@ -264,11 +283,9 @@ class StatusPublisher(Node):
         msg = String()
         msg.data = text
         self.pub.publish(msg)
-        self.get_logger().info(f"📤 Robot Status Published: {text}")
+        self.get_logger().info(f"📤 Robot Status: {text}")
 
-########################################################
-# 9. LlmResultPublisher노드 실행
-########################################################
+
 class LlmResultPublisher(Node):
     def __init__(self):
         super().__init__("llm_result_publisher")
@@ -278,11 +295,9 @@ class LlmResultPublisher(Node):
         msg = String()
         msg.data = text
         self.pub.publish(msg)
-        self.get_logger().info(f"📤 LLM Result Published: {text[:50]}...")
+        self.get_logger().info("📤 LLM Result Published")
 
-########################################################
-# 10. DetourPublisher 실행
-########################################################
+
 class DetourPublisher(Node):
     def __init__(self):
         super().__init__("detour_publisher")
@@ -292,10 +307,11 @@ class DetourPublisher(Node):
         msg = String()
         msg.data = text
         self.pub.publish(msg)
-        self.get_logger().info(f"📤 Detour Published: {text}...")
+        self.get_logger().info(f"📤 Detour Published: {text}")
+
 
 ########################################################
-# 11. ROS2 실행
+# 9. MAIN
 ########################################################
 def main(args=None):
     global tts_pub_node, ocr_pub_node, status_pub_node, llm_pub_node, detour_pub_node
@@ -308,6 +324,7 @@ def main(args=None):
     status_pub_node = StatusPublisher()
     llm_pub_node = LlmResultPublisher()
     detour_pub_node = DetourPublisher()
+    ocr_result_node = OcrResultSubscriber()
 
     executor = rclpy.executors.MultiThreadedExecutor()
     executor.add_node(voice_node)
@@ -316,6 +333,7 @@ def main(args=None):
     executor.add_node(status_pub_node)
     executor.add_node(llm_pub_node)
     executor.add_node(detour_pub_node)
+    executor.add_node(ocr_result_node)
 
     try:
         executor.spin()
@@ -328,6 +346,7 @@ def main(args=None):
         status_pub_node.destroy_node()
         llm_pub_node.destroy_node()
         detour_pub_node.destroy_node()
+        ocr_result_node.destroy_node()
         rclpy.shutdown()
 
 
