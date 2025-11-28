@@ -1,222 +1,251 @@
 import streamlit as st
 import base64
-import json
 import time
-import os
+import requests
 
 st.set_page_config(layout="wide")
 
-FILE_PATH = "/tmp/robot_ui_status.json"
-
-# ========== Base64 이미지 ==========
-def get_base64_image(path):
+# =========================================================
+# Base64 이미지 로더
+# =========================================================
+def img64(path):
     try:
         with open(path, "rb") as f:
             return base64.b64encode(f.read()).decode()
     except:
         return None
 
-face_img = get_base64_image("assets/face_smile.png")
-big_buddy = get_base64_image("assets/body_flag.png")    # 큰 캐릭터
-small_buddy = get_base64_image("assets/body_flag.png")  # 지도 위 작은 캐릭터
-map_img = get_base64_image("assets/map_line.png")
+face_img = img64("assets/face_smile.png")
+big_buddy = img64("assets/body_flag.png")
+small_buddy = img64("assets/body_flag.png")
+map_img = img64("assets/map_line.png")
 
-def read_name():
-    if not os.path.exists(FILE_PATH):
-        return ""
+# =========================================================
+# 병원 지도 좌표 (%)
+# =========================================================
+map_points = {
+    "X-ray실":  {"left": 24.9, "top": 13.9},
+    "응급실":   {"left": 61.7, "top": 13.9},
+    "화장실":   {"left": 90.2, "top": 26.7},
+    "약국":     {"left": 19.3, "top": 47.2},
+    "수납":     {"left": 49.7, "top": 48.7},
+    "채혈실":   {"left": 65.7, "top": 69.6},
+}
 
-    try:
-        with open(FILE_PATH, "r") as f:
-            txt = f.read().strip()
-            if not txt:
-                return ""
-            data = json.loads(txt)
-            return data.get("client_name", "")
-    except Exception:
-        # JSON이 깨졌거나, 쓰는 중이거나, parse 실패 → 기본값 반환
-        return ""
+# =========================================================
+# 🔥 직각 이동 waypoints
+# =========================================================
+waypoints = {
+    ("채혈실", "X-ray실"): [
+        {"left": 65.7, "top": 40},
+        {"left": 24.9, "top": 40},
+    ],
 
-def read_destinations():
-    if not os.path.exists(FILE_PATH):
-        return ""
+    ("X-ray실", "수납"): [
+        {"left": 24.9, "top": 30},
+        {"left": 49.7, "top": 30},
+    ],
 
-    try:
-        with open(FILE_PATH, "r") as f:
-            txt = f.read().strip()
-            if not txt:
-                return ""
-            data = json.loads(txt)
-            return data.get("destinations", "")
-    except Exception:
-        # JSON이 깨졌거나, 쓰는 중이거나, parse 실패 → 기본값 반환
-        return ""
+    # 자연스러운 ㄱ자 이동
+    ("채혈실", "수납"): [
+        {"left": 65.7, "top": 60},
+    ],
 
-def read_status():
-    if not os.path.exists(FILE_PATH):
-        return ""
+    ("수납", "채혈실"): [
+        {"left": 49.7, "top": 60},
+        {"left": 65.7, "top": 60},
+    ],
 
-    try:
-        with open(FILE_PATH, "r") as f:
-            txt = f.read().strip()
-            if not txt:
-                return ""
-            data = json.loads(txt)
-            return data.get("status", "")
-    except Exception:
-        # JSON이 깨졌거나, 쓰는 중이거나, parse 실패 → 기본값 반환
-        return ""
+    ("약국", "수납"): [
+        {"left": 19.3, "top": 48.7},
+        {"left": 49.7, "top": 48.7},
+    ],
+}
+
+# =========================================================
+# 상태값 초기화
+# =========================================================
+session = st.session_state
+
+if "qr_data" not in session:
+    # 초기값 (실제 QR로 대체)
+    session["qr_data"] = {
+        "name": "정지아",
+        "date": "2025년 11월 28일",
+        "route": ["채혈실", "X-ray실", "수납"]
+    }
+
+if "route_original" not in session:
+    session["route_original"] = session["qr_data"]["route"]
+
+if "route_current" not in session:
+    session["route_current"] = session["qr_data"]["route"]
+
+if "bathroom_mode" not in session:
+    session["bathroom_mode"] = False
+
+if "face_detected" not in session:
+    session["face_detected"] = False
+
+if "anim_speed" not in session:
+    session["anim_speed"] = 8   # ⬅ 매우 느림 속도 적용 (8초)
+
+# =========================================================
+# 📡 FastAPI 폴링
+# =========================================================
+FACE_URL = "http://127.0.0.1:8000/face-status"
+VOICE_URL = "http://127.0.0.1:8000/voice"
+QR_URL   = "http://127.0.0.1:8000/qr"
+
+# 얼굴 인식 polling
+try:
+    res = requests.get(FACE_URL, timeout=0.2).json()
+    if res.get("face_detected"):
+        session["face_detected"] = True
+except:
+    pass
+
+# 음성 명령 polling
+try:
+    res = requests.get(VOICE_URL, timeout=0.2).json()
+    if res.get("go_bathroom"):
+        session["bathroom_mode"] = True
+        session["route_current"] = ["화장실"]
+        session["face_detected"] = False
+except:
+    pass
+
+# QR polling
+try:
+    res = requests.get(QR_URL, timeout=0.2).json()
+    if res.get("route"):
+        session["qr_data"] = res
+        session["route_original"] = res["route"]
+
+        if not session["bathroom_mode"]:
+            session["route_current"] = res["route"]
+except:
+    pass
 
 
-name = read_name()
-destinations = read_destinations()
-status = read_status()
+# =========================================================
+# 얼굴 인식 → 화장실 종료 → 경로 복귀
+# =========================================================
+if session["bathroom_mode"] and session["face_detected"]:
+    session["bathroom_mode"] = False
+    session["route_current"] = session["route_original"]
+    session["face_detected"] = False
+    st.rerun()
 
-# destinations -> HTML 줄바꿈 변환
-def format_destinations(dest_str: str):
-    if not dest_str:
-        return ""
-    
-    items = [d.strip() for d in dest_str.split(",") if d.strip()]
+# =========================================================
+# 현재 경로
+# =========================================================
+route = session["route_current"]
 
-    html = ""
-    for i, item in enumerate(items, start=1):
-        html += f"{i}. {item}<br>"
-    return html
+# =========================================================
+# 🔥 애니메이션 keyframes 생성
+# =========================================================
+if session["bathroom_mode"]:
+    pos = map_points["화장실"]
 
-order_list_html = format_destinations(destinations)
+    keyframes = f"""
+    @keyframes buddyBounce {{
+      0%   {{ top: {pos['top'] - 2}%; left: {pos['left']}%; }}
+      50%  {{ top: {pos['top'] + 2}%; left: {pos['left']}%; }}
+      100% {{ top: {pos['top'] - 2}%; left: {pos['left']}%; }}
+    }}
+    """
+    animation_css = "animation: buddyBounce 1s infinite ease-in-out;"
 
-# ---------- QR START EVENT ----------
-if status == "audio_incoming":
-    # 즉시 3-3_follow_stage 로 전환
-    st.switch_page("pages/3-3_follow_stage.py")
+else:
+    full_path = []
 
-# -------------------------------------------------------
-# CSS : 베이지색 전체가 "하나의 네모" + 애니메이션 적용
-# -------------------------------------------------------
-st.markdown("""
+    for i in range(len(route) - 1):
+        s = route[i]
+        e = route[i + 1]
+
+        full_path.append(map_points[s])
+
+        if (s, e) in waypoints:
+            full_path.extend(waypoints[(s, e)])
+
+        full_path.append(map_points[e])
+
+    if not full_path:
+        full_path = [map_points[route[0]]]
+
+    step = 100 / (len(full_path) - 1)
+
+    keyframes = "@keyframes moveBuddy {\n"
+    for i, p in enumerate(full_path):
+        keyframes += f"{round(i * step, 2)}% {{ top:{p['top']}%; left:{p['left']}%; }}\n"
+    keyframes += "}\n"
+
+    animation_css = f"animation: moveBuddy {session['anim_speed']}s infinite alternate ease-in-out;"
+
+
+# Inject CSS
+st.markdown(f"""
 <style>
-
-@import url('https://fonts.googleapis.com/css2?family=Jua&display=swap');
-* { font-family: "Jua", sans-serif; }
-
-.stApp { background-color: #f5f5f5 !important; }
-header, .stToolbar { display: none !important; }
-
-/* 전체 wrap */
-.map-wrapper {
-    width: 100%;
-    margin: 40px auto;
-    display: flex;
-    justify-content: center;
-}
-
-/* 네이비 큰 박스 */
-.map-box {
-    width: 92%;
-    max-width: 1400px;
-    background: #0E2C55;
-    padding: 60px;
-    border-radius: 25px;
-}
-
-/* ⭐ 하나의 통합 베이지 박스 */
-.inner-paper {
-    background: #F7F3EB;
-    width: 100%;
-    padding: 60px 50px;
-    border-radius: 18px;
-
-    display: grid;
-    grid-template-columns: 45% 55%;
-    gap: 10px;
-}
-
-/* 왼쪽 정보 영역 */
-.left-area {
-    position: relative;
-}
-
-.left-face { width: 140px; }
-
-.left-title { font-size: 40px; margin-top: 10px; }
-.left-date { font-size: 24px; margin: 20px 0 25px; }
-.order-list { font-size: 24px; line-height: 1.8; }
-
-/* 왼쪽 아래 큰 메디버디 */
-.big-buddy {
-    width: 180px;
-    position: absolute;
-    bottom: 0;
-    left: 0;
-}
-
-/* 오른쪽 지도 */
-.right-area {
-    position: relative;
-}
-
-.map-img {
-    width: 100%;
-    border-radius: 12px;
-}
-
-/* ⭐ 작은 메디버디 이동 애니메이션 (척추센터 → 수납) */
-@keyframes moveBuddy {
-    0%   { top: 38%; left: 36%; }   /* 척추센터 */
-    100% { top: 53%; left: 56%; }   /* 수납 */
-}
-
-.small-buddy {
-    width: 100px;
-    position: absolute;
-    animation: moveBuddy 2.4s infinite alternate ease-in-out;
-    transform: translate(-50%, -50%);
-}
-
+{keyframes}
+.small-buddy {{
+    width:100px;
+    position:absolute;
+    transform:translate(-50%, -50%);
+    {animation_css}
+}}
 </style>
 """, unsafe_allow_html=True)
 
+# =========================================================
+# 텍스트 부분
+# =========================================================
+order_html = "".join([f"{i+1}. {r}<br>" for i, r in enumerate(route)])
+title_text = (
+    f"{session['qr_data']['name']}님 화장실 대기 중"
+    if session["bathroom_mode"]
+    else f"{session['qr_data']['name']}님 진료 순서표"
+)
 
-# -------------------------------------------------------
-# HTML : 왼쪽 정보 + 오른쪽 지도 + 애니메이션
-# -------------------------------------------------------
+# =========================================================
+# 메인 UI
+# =========================================================
 st.html(f"""
-<div class="map-wrapper">
-    <div class="map-box">
+<div style="display:flex; justify-content:center; margin-top:40px;">
+  <div style="width:92%; max-width:1400px; background:#0E2C55;
+              padding:60px; border-radius:25px;">
 
-        <div class="inner-paper">
+    <div style="background:#F7F3EB; padding:60px 50px;
+                border-radius:18px; display:grid;
+                grid-template-columns:45% 55%; gap:10px;">
 
-            <!-- 왼쪽 정보 -->
-            <div class="left-area">
-                <img src="data:image/png;base64,{face_img}" class="left-face">
+      <!-- 왼쪽 정보 -->
+      <div style="position:relative;">
+        <img src="data:image/png;base64,{face_img}" style="width:140px;">
+        <div style="font-size:40px; margin-top:10px;">개인 진료 MAP</div>
 
-                <div class="left-title">개인 진료 MAP</div>
-
-                <div class="left-date">
-                    2025년 11월 12일<br>
-                    {name}님 진료 순서표
-                </div>
-
-                <div class="order-list">
-                    {order_list_html}
-                </div>
-
-                <img src="data:image/png;base64,{big_buddy}" class="big-buddy">
-            </div>
-
-            <!-- 오른쪽 지도 -->
-            <div class="right-area">
-                <img src="data:image/png;base64,{map_img}" class="map-img">
-
-                <img src="data:image/png;base64,{small_buddy}" class="small-buddy">
-            </div>
-
+        <div style="font-size:24px; margin:20px 0 25px;">
+          {session['qr_data']['date']}<br>
+          {title_text}
         </div>
 
+        <div style="font-size:24px; line-height:1.8;">
+          {order_html}
+        </div>
+
+        <img src="data:image/png;base64,{big_buddy}"
+             style="width:180px; position:absolute; bottom:0; left:0;">
+      </div>
+
+      <!-- 오른쪽 지도 -->
+      <div style="position:relative;">
+        <img src="data:image/png;base64,{map_img}"
+             style="width:100%; border-radius:12px;">
+        <img src="data:image/png;base64,{small_buddy}" class="small-buddy">
+      </div>
+
     </div>
+
+  </div>
 </div>
 """)
-
-# ========== 자동 rerun ==========
-time.sleep(0.08)
-st.rerun()
