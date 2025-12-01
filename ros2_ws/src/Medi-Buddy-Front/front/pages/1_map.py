@@ -86,7 +86,8 @@ status = data.get("status", "")
 detour_req = data.get("detour", "")
 current_dest = data.get("current_destination", "")
 
-route = destinations_raw.split(",") if destinations_raw else []
+route = destinations_raw.split(", ") if destinations_raw else []
+
 
 # =========================================================
 # 화장실/엘리베이터 우회 모드 (영어 목적지명)
@@ -164,6 +165,7 @@ st.markdown(f"""
 
 {keyframes}
 </style>
+""", unsafe_allow_html=True)
 """, unsafe_allow_html=True)
 
 # =========================================================
