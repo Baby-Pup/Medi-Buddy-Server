@@ -225,7 +225,7 @@ def tree(voice):
 
         case 4:
             status_pub_node.publish_status("question_disease")
-            sys_message = "질병 정보를 3문장의 쉬운 말로 설명해주세요."
+            sys_message = "환자의 과거 진료 기록을 배경지식으로 활용하고 질병 정보와 해결 방안을 3문장의 존댓말로 설명해주세요."
             if client_name in medical_records.keys():
                 sys_message+='\n[과거 진료 기록]\n'
                 sys_message+='\n'.join(medical_records[client_name])
