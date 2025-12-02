@@ -52,7 +52,7 @@ if elapsed >= 2.0 and not st.session_state.text_changed:
 
 # 변경되는 텍스트
 if not st.session_state.text_changed:
-    bottom_text = f"{name} 님, 오늘의 예약을 안내해드릴까요?"
+    bottom_text = "오늘의 예약을 안내해드릴까요?"
 else:
     bottom_text = "가는 중에 필요하신게 있다면 말씀해주세요."
 
