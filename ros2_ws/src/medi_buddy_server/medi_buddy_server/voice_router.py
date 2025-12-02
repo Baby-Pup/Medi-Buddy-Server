@@ -109,10 +109,9 @@ tts_pub_node = None
 
 
 ########################################################
-# 🔵 5. OCR 결과 구독 (추가)
+# 5. OCR 결과 & Client Name 구독 
 ########################################################
 
-### 🔵 현재 OCR 텍스트 저장소
 latest_ocr_text = None
 
 class OcrResultSubscriber(Node):
@@ -133,6 +132,26 @@ class OcrResultSubscriber(Node):
 
 
 
+client_name = None
+
+class ClientNameSubscriber(Node):
+    def __init__(self):
+        super().__init__("client_name_subscriber")
+        self.subscription = self.create_subscription(
+            String,
+            "client_name",
+            self.callback_client_name,
+            10
+        )
+        self.get_logger().info("📥 Client Name 구독 시작 (/client_name)")
+
+    def callback_client_name(self, msg):
+        global client_name
+        client_name = msg.data
+        self.get_logger().info(f"📌 Client Name 수신: {client_name}")
+
+
+
 ########################################################
 # 6. 트리 라우팅
 ########################################################
@@ -150,12 +169,22 @@ def tree(voice):
 
         case 1:
             status_pub_node.publish_status("detour")
-            rooms = ['X-ray실', '응급실', '채혈실', '약국', '수납', '화장실']
+
+            room_map = {
+                "X-ray실": "x_ray_room",
+                "응급실": "emergency_room",
+                "채혈실": "blood_draw_room",
+                "약국": "pharmacy",
+                "수납": "reception",
+                "화장실": "restroom"
+            }
+
             message = "안내할 수 있는 장소를 찾지 못했습니다"
-            for r in rooms:
-                if r in voice:
-                    message = f"{r} 안내를 시작합니다"
-                    detour_pub_node.publish_destination(r)
+
+            for kor, eng in room_map.items():
+                if kor in voice:
+                    message = f"{kor} 안내를 시작합니다"
+                    detour_pub_node.publish_destination(eng)
                     break
 
         case 2:
@@ -172,14 +201,14 @@ def tree(voice):
             ### OCR 텍스트가 들어올 때까지 기다림
             #    - 비동기 ROS 구조에서 polling 방식으로
             wait_t = 0
-            while latest_ocr_text is None and wait_t < 10:
+            while latest_ocr_text is None and wait_t < 30:
                 time.sleep(0.2)
                 wait_t += 0.2
 
             if latest_ocr_text is None:
                 message = "문서를 인식하지 못했습니다."
             else:
-                sys_message = "약 정보를 효능, 부작용, 주의 사항 중심으로 3문장의 쉬운 말로 설명해주세요.ㄴ"
+                sys_message = "약 정보를 효능, 부작용, 주의 사항 중심으로 3문장의 쉬운 말로 설명해주세요."
                 message = llm(sys_message, query=latest_ocr_text)
 
         case 3:
@@ -325,6 +354,7 @@ def main(args=None):
     llm_pub_node = LlmResultPublisher()
     detour_pub_node = DetourPublisher()
     ocr_result_node = OcrResultSubscriber()
+    client_name_node = ClientNameSubscriber()
 
     executor = rclpy.executors.MultiThreadedExecutor()
     executor.add_node(voice_node)
@@ -334,6 +364,7 @@ def main(args=None):
     executor.add_node(llm_pub_node)
     executor.add_node(detour_pub_node)
     executor.add_node(ocr_result_node)
+    executor.add_node(client_name_node)
 
     try:
         executor.spin()
@@ -347,6 +378,7 @@ def main(args=None):
         llm_pub_node.destroy_node()
         detour_pub_node.destroy_node()
         ocr_result_node.destroy_node()
+        client_name_node.destroy_node()
         rclpy.shutdown()
 
 
