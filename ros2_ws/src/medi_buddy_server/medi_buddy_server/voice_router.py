@@ -14,14 +14,7 @@ import tensorflow as tf
 from transformers import AutoTokenizer, TFAutoModelForSequenceClassification
 import psycopg2
 
-conn = psycopg2.connect(
-    host = 'localhost',
-    dbname = 'MediBuddy',
-    user = 'serene',
-    password = '0511'
-)
 
-cur = conn.cursor()
 
 
 load_dotenv()
@@ -167,6 +160,14 @@ def get_records(name: str):
     QR에서 읽은 이름(name: '채서린')으로
     medical_record 테이블에서 해당 환자의 증상을 조회.
     """
+    conn = psycopg2.connect(
+    host = 'localhost',
+    dbname = 'MediBuddy',
+    user = 'serene',
+    password = '0511'
+)
+
+    cur = conn.cursor()
     sql = """
         SELECT diagnosis, visit_date
         FROM medical_record
@@ -177,12 +178,10 @@ def get_records(name: str):
 
     cur.execute(sql, (name,))
     rows = cur.fetchall()
+    cur.close()
+    conn.close()
     return rows
 
-records = get_records(client_name)
-record_list = []
-for r in records:
-    record_list.append((r[1].strftime("%Y년 %m월 %d일")+": "+r[0]))
 
 ########################################################
 # 6. 트리 라우팅
@@ -251,9 +250,16 @@ def tree(voice):
         case 4:
             status_pub_node.publish_status("question_disease")
             sys_message = "질병 정보를 3문장의 쉬운 말로 설명해주세요."
+            
+            records = get_records(client_name)
+            record_list = []
+            for r in records:
+                record_list.append((r[1].strftime("%Y년 %m월 %d일")+": "+r[0]))
+                
             if record_list:
                 sys_message+='[환자 진료 기록]\n'
                 sys_message+='\n'.join(record_list)
+                print("Query:", sys_message)
 
             message = llm(sys_message, query=voice)
 
@@ -415,8 +421,6 @@ def main(args=None):
         detour_pub_node.destroy_node()
         ocr_result_node.destroy_node()
         client_name_node.destroy_node()
-        cur.close()
-        conn.close()
         rclpy.shutdown()
 
 
