@@ -29,7 +29,7 @@ class StatusSubscriber(Node):
         self.current_llm_result = ""
         self.detour = ""
         self.current_date = ""
-        self.current_destination = "s"
+        self.current_destination = ""
 
         # ---- 토픽 구독 ----
         self.create_subscription(String, '/robot_status', self.status_callback, 10)
@@ -81,14 +81,13 @@ class StatusSubscriber(Node):
         self.write_json()
         self.get_logger().info(f"[WRITE] client_name: {self.current_client_name}")
 
-    def ocr_result_callback(self, msg: String):
-        try:
-            data = json.loads(msg.data)
-            self.current_ocr_brand_name = data.get("brand_name", "")
-            self.write_json()
-            self.get_logger().info(f"[WRITE] ocr_brand_name: {self.current_ocr_brand_name}")
-        except Exception as e:
-            self.get_logger().error(f"OCR result JSON parsing error: {e}")
+    def ocr_result_callback(self, msg: String):    
+        text = msg.data.strip()
+
+        self.current_ocr_brand_name = text
+
+        self.write_json()
+        self.get_logger().info(f"[WRITE] ocr_brand_name: {self.current_ocr_brand_name}")
 
     def llm_result_callback(self, msg):
         self.current_llm_result = msg.data

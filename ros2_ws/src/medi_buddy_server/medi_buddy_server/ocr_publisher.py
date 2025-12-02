@@ -11,6 +11,7 @@ from cv_bridge import CvBridge
 
 import rclpy
 from rclpy.node import Node
+import time
 
 # 설정값
 CONFIDENCE_THRESHOLD = 0.3
@@ -73,7 +74,7 @@ def find_brand_name(ocr_data, image_shape):
 
         box_height = np.max(bbox[:, 1]) - np.min(bbox[:, 1])
 
-        if len(text) < 2 and box_height < (img_h * 0.2):
+        if len(text) < 2 and box_height < (img_h * 0.08):
             continue
         if len(text) > 50:
             continue
@@ -100,15 +101,20 @@ class OcrNode(Node):
         self.ocr_request = False
         self.bridge = CvBridge()
 
-        # 요청사항 반영: 초기 스킵 프레임 개수 수정
-        self.skip_frames = 2          
-        self.frame_counter = 0        
-        self.brand_votes = {}         
-        self.required_votes = 3       
+        # 요청사항 반영
+        self.skip_frames = 2
+        self.frame_counter = 0
+        self.brand_votes = {}
+        self.required_votes = 3
+
+        # ⏱️ 추가: OCR 타임아웃
+        self.ocr_start_time = None
+        self.ocr_timeout = 30.0   # 30초
 
         # ROS 설정
         self.create_subscription(Bool, "/ocr_request", self.ocr_request_callback, 10)
         self.image_sub = None
+
         self.ocr_result_pub = self.create_publisher(String, "/ocr_result", 10)
         self.status_pub = self.create_publisher(String, '/robot_status', 10)
 
@@ -128,7 +134,9 @@ class OcrNode(Node):
             # 초기화
             self.frame_counter = 0
             self.brand_votes = {}
+            self.ocr_start_time = time.time()   # 🔥 타임아웃 시작
 
+            # 카메라 구독 시작
             self.image_sub = self.create_subscription(
                 Image,
                 "/camera/image_raw",
@@ -143,15 +151,25 @@ class OcrNode(Node):
         if not self.ocr_request:
             return
 
+        # 30초 타임아웃 체크
+        if time.time() - self.ocr_start_time > self.ocr_timeout:
+            self.get_logger().info("⛔ OCR 시간 초과(30초) → OCR 실패 처리")
+
+            # 구독 종료
+            if self.image_sub:
+                self.destroy_subscription(self.image_sub)
+                self.image_sub = None
+
+            self.ocr_request = False
+            return
+
         cv_image = self.bridge.imgmsg_to_cv2(msg, desired_encoding="bgr8")
         self.frame_counter += 1
 
-        # 1) 초기 2프레임 스킵
+        # 1) 초기 프레임 스킵
         if self.frame_counter <= self.skip_frames:
             self.get_logger().info(f"⏭ 초기 프레임 스킵 {self.frame_counter}/{self.skip_frames}")
             return
-
-        # 2) 흐린 이미지 체크 제거됨
 
         # 3) OCR 수행
         self.get_logger().info("🔍 OCR 수행 중...")
@@ -192,15 +210,6 @@ class OcrNode(Node):
 
             self.ocr_request = False
             return
-
-        # 6) 최대 프레임 제한
-        if self.frame_counter >= 15:
-            self.get_logger().info("⛔ 최대 프레임 초과 → OCR 실패 처리")
-            self.ocr_request = False
-
-            if self.image_sub:
-                self.destroy_subscription(self.image_sub)
-                self.image_sub = None
 
 
 # ---------------- main ----------------
