@@ -66,7 +66,6 @@ FILE_PATH = "/tmp/robot_ui_status.json"
 def read_status():
     if not os.path.exists(FILE_PATH):
         return {}
-
     try:
         with open(FILE_PATH, "r") as f:
             data = json.loads(f.read().strip())
@@ -88,9 +87,8 @@ current_dest = data.get("current_destination", "")
 
 route = destinations_raw.split(", ") if destinations_raw else []
 
-
 # =========================================================
-# 화장실/엘리베이터 우회 모드 (영어 목적지명)
+# 화장실/엘리베이터 우회 모드
 # =========================================================
 bathroom_mode = False
 if detour_req and detour_req != "none":
@@ -98,9 +96,14 @@ if detour_req and detour_req != "none":
     route = ["restroom"]
 
 # =========================================================
-# 🔥 애니메이션 경로 생성
+# 🔥 애니메이션 경로 생성 (현재 단계만)
 # =========================================================
+full_path = []
+
 if bathroom_mode:
+    # ============================
+    # 화장실 안내 모드 (고정 점프)
+    # ============================
     pos = map_points["restroom"]
     keyframes = f"""
     @keyframes buddyBounce {{
@@ -112,11 +115,16 @@ if bathroom_mode:
     animation_css = "animation: buddyBounce 1.2s infinite ease-in-out;"
 
 else:
-    full_path = []
-    if len(route) >= 1:
-        for i in range(len(route) - 1):
-            s = route[i]
-            e = route[i + 1]
+    # ============================
+    # 🚀 현재 단계에서 다음 단계만 이동
+    # ============================
+    if current_dest in route:
+        cur_idx = route.index(current_dest)
+
+        # 다음 목적지가 존재할 때만
+        if cur_idx < len(route) - 1:
+            s = route[cur_idx]
+            e = route[cur_idx + 1]
 
             full_path.append(map_points[s])
 
@@ -124,16 +132,17 @@ else:
                 full_path.extend(waypoints[(s, e)])
 
             full_path.append(map_points[e])
-    else:
-        full_path = [map_points[current_dest]] if current_dest in map_points else []
 
+    # ============================
+    # CSS keyframes 생성
+    # ============================
     if full_path:
         step = 100 / (len(full_path) - 1)
         keyframes = "@keyframes moveBuddy {\n"
         for i, p in enumerate(full_path):
             keyframes += f"{round(i * step, 2)}% {{ top:{p['top']}%; left:{p['left']}%; }}\n"
         keyframes += "}\n"
-        animation_css = f"animation: moveBuddy 10s infinite alternate ease-in-out;"
+        animation_css = "animation: moveBuddy 8s linear forwards;"  # <-- 이동 속도 느리게(8초)
     else:
         keyframes = ""
         animation_css = ""
@@ -165,7 +174,6 @@ st.markdown(f"""
 
 {keyframes}
 </style>
-""", unsafe_allow_html=True)
 """, unsafe_allow_html=True)
 
 # =========================================================
