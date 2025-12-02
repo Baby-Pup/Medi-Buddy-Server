@@ -34,7 +34,7 @@ map_points = {
 }
 
 # =========================================================
-# 🔥 직각 이동 waypoints (영어 목적지명)
+# 🔥 직각 이동 waypoints
 # =========================================================
 waypoints = {
     ("blood_draw_room", "x_ray_room"): [
@@ -59,7 +59,7 @@ waypoints = {
 }
 
 # =========================================================
-# JSON 파일 로드
+# JSON 상태 로드
 # =========================================================
 FILE_PATH = "/tmp/robot_ui_status.json"
 
@@ -68,27 +68,27 @@ def read_status():
         return {}
     try:
         with open(FILE_PATH, "r") as f:
-            data = json.loads(f.read().strip())
-            return data
+            return json.loads(f.read().strip())
     except:
         return {}
 
 data = read_status()
 
 # =========================================================
-# JSON에서 상태 불러오기
+# JSON 파싱
 # =========================================================
 client_name = data.get("client_name", "No Name")
 date_str = data.get("date", "")
 destinations_raw = data.get("destinations", "")
 status = data.get("status", "")
 detour_req = data.get("detour", "")
-current_dest = data.get("current_destination", "")
+current_dest = data.get("current_destination", "").strip()
 
-route = destinations_raw.split(", ") if destinations_raw else []
+# route 파싱 (공백 제거 필수)
+route = [r.strip() for r in destinations_raw.split(",")] if destinations_raw else []
 
 # =========================================================
-# 화장실/엘리베이터 우회 모드
+# 우회 모드
 # =========================================================
 bathroom_mode = False
 if detour_req and detour_req != "none":
@@ -96,14 +96,14 @@ if detour_req and detour_req != "none":
     route = ["restroom"]
 
 # =========================================================
-# 🔥 애니메이션 경로 생성 (현재 단계만)
+# 🔥 애니메이션 경로 생성 (현재 단계 기반 + fallback 포함)
 # =========================================================
 full_path = []
+keyframes = ""
+animation_css = ""
 
 if bathroom_mode:
-    # ============================
-    # 화장실 안내 모드 (고정 점프)
-    # ============================
+    # 화장실 안내 모드 (점프)
     pos = map_points["restroom"]
     keyframes = f"""
     @keyframes buddyBounce {{
@@ -115,46 +115,49 @@ if bathroom_mode:
     animation_css = "animation: buddyBounce 1.2s infinite ease-in-out;"
 
 else:
-    # ============================
-    # 🚀 현재 단계에서 다음 단계만 이동
-    # ============================
-    if current_dest in route:
-        cur_idx = route.index(current_dest)
+    segment_found = False
 
-        # 다음 목적지가 존재할 때만
-        if cur_idx < len(route) - 1:
-            s = route[cur_idx]
-            e = route[cur_idx + 1]
+    # 1) current_dest 기반 단계 이동
+    if current_dest and current_dest in route:
+        idx = route.index(current_dest)
+        if idx < len(route) - 1:
+            s = route[idx]
+            e = route[idx + 1]
 
             full_path.append(map_points[s])
-
             if (s, e) in waypoints:
                 full_path.extend(waypoints[(s, e)])
-
             full_path.append(map_points[e])
 
-    # ============================
-    # CSS keyframes 생성
-    # ============================
+            segment_found = True
+
+    # 2) fallback: current_dest 없으면 전체 경로 첫 구간 1→2 이동
+    if not segment_found and len(route) >= 2:
+        s = route[0]
+        e = route[1]
+
+        full_path.append(map_points[s])
+        if (s, e) in waypoints:
+            full_path.extend(waypoints[(s, e)])
+        full_path.append(map_points[e])
+
+        segment_found = True
+
+    # 3) 이동 경로가 있다면 keyframes 생성
     if full_path:
         step = 100 / (len(full_path) - 1)
         keyframes = "@keyframes moveBuddy {\n"
         for i, p in enumerate(full_path):
             keyframes += f"{round(i * step, 2)}% {{ top:{p['top']}%; left:{p['left']}%; }}\n"
         keyframes += "}\n"
-        animation_css = "animation: moveBuddy 8s linear forwards;"  # <-- 이동 속도 느리게(8초)
-    else:
-        keyframes = ""
-        animation_css = ""
+        animation_css = "animation: moveBuddy 8s linear forwards;"
 
 # =========================================================
-# 순서표 텍스트
+# 순서 텍스트
 # =========================================================
 order_html = "".join([f"{i+1}. {r}<br>" for i, r in enumerate(route)])
 title_text = (
-    f"{client_name} - Moving to Restroom"
-    if bathroom_mode else
-    f"{client_name}'s Medical Route"
+    f"{client_name} - Moving to Restroom" if bathroom_mode else f"{client_name}'s Medical Route"
 )
 
 # =========================================================
