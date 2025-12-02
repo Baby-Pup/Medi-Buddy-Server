@@ -22,9 +22,11 @@ small_buddy = img64("assets/body_flag.png")
 map_img = img64("assets/map_line.png")
 
 # =========================================================
-# 🗺 병원 지도 좌표 (영어 목적지명)
+# 🗺 병원 지도 좌표 (입구 포함)
 # =========================================================
 map_points = {
+    "hospital_entrance": {"left": 40.0, "top": 87.0},   # ⭐ 추가된 입구 위치
+
     "x_ray_room":       {"left": 24.9, "top": 13.9},
     "emergency_room":   {"left": 61.7, "top": 13.9},
     "restroom":         {"left": 90.2, "top": 26.7},
@@ -34,7 +36,7 @@ map_points = {
 }
 
 # =========================================================
-# 🔥 직각 이동 waypoints
+# 🔥 직각 이동 waypoints (입구 → 장소 포함)
 # =========================================================
 waypoints = {
     ("blood_draw_room", "x_ray_room"): [
@@ -55,6 +57,35 @@ waypoints = {
     ("pharmacy", "reception"): [
         {"left": 19.3, "top": 48.7},
         {"left": 49.7, "top": 48.7},
+    ],
+
+    # ⭐ 입구 → 각 방
+    ("hospital_entrance", "pharmacy"): [
+        {"left": 40.0, "top": 60.0},
+        {"left": 19.3, "top": 60.0},
+    ],
+    ("hospital_entrance", "reception"): [
+        {"left": 40.0, "top": 60.0},
+        {"left": 49.7, "top": 60.0},
+    ],
+    ("hospital_entrance", "blood_draw_room"): [
+        {"left": 50.0, "top": 87.0},
+        {"left": 50.0, "top": 70.0},
+        {"left": 65.7, "top": 70.0},
+    ],
+    ("hospital_entrance", "x_ray_room"): [
+        {"left": 40.0, "top": 60.0},
+        {"left": 24.9, "top": 60.0},
+        {"left": 24.9, "top": 13.9},
+    ],
+    ("hospital_entrance", "emergency_room"): [
+        {"left": 40.0, "top": 60.0},
+        {"left": 61.7, "top": 60.0},
+        {"left": 61.7, "top": 13.9},
+    ],
+    ("hospital_entrance", "restroom"): [
+        {"left": 40.0, "top": 60.0},
+        {"left": 90.2, "top": 60.0},
     ],
 }
 
@@ -84,26 +115,32 @@ status = data.get("status", "")
 detour_req = data.get("detour", "")
 current_dest = data.get("current_destination", "").strip()
 
-# route 파싱 (공백 제거 필수)
+# route 파싱
 route = [r.strip() for r in destinations_raw.split(",")] if destinations_raw else []
 
 # =========================================================
-# 우회 모드
+# ⭐ 입구에서 시작하도록 route 수정
 # =========================================================
-bathroom_mode = False
+# detour(화장실 우회)일 경우
 if detour_req and detour_req != "none":
     bathroom_mode = True
-    route = ["restroom"]
+    route = ["hospital_entrance", "restroom"]
+else:
+    bathroom_mode = False
+
+    # 원래 route가 있을 경우 → 맨 앞에 hospital_entrance 추가
+    if len(route) >= 1 and route[0] != "hospital_entrance":
+        route = ["hospital_entrance"] + route
+
 
 # =========================================================
-# 🔥 애니메이션 경로 생성 (현재 단계 기반 + fallback 포함)
+# 🔥 경로 애니메이션 생성
 # =========================================================
 full_path = []
 keyframes = ""
 animation_css = ""
 
 if bathroom_mode:
-    # 화장실 안내 모드 (점프)
     pos = map_points["restroom"]
     keyframes = f"""
     @keyframes buddyBounce {{
@@ -113,26 +150,8 @@ if bathroom_mode:
     }}
     """
     animation_css = "animation: buddyBounce 1.2s infinite ease-in-out;"
-
 else:
-    segment_found = False
-
-    # 1) current_dest 기반 단계 이동
-    if current_dest and current_dest in route:
-        idx = route.index(current_dest)
-        if idx < len(route) - 1:
-            s = route[idx]
-            e = route[idx + 1]
-
-            full_path.append(map_points[s])
-            if (s, e) in waypoints:
-                full_path.extend(waypoints[(s, e)])
-            full_path.append(map_points[e])
-
-            segment_found = True
-
-    # 2) fallback: current_dest 없으면 전체 경로 첫 구간 1→2 이동
-    if not segment_found and len(route) >= 2:
+    if len(route) >= 2:
         s = route[0]
         e = route[1]
 
@@ -141,9 +160,6 @@ else:
             full_path.extend(waypoints[(s, e)])
         full_path.append(map_points[e])
 
-        segment_found = True
-
-    # 3) 이동 경로가 있다면 keyframes 생성
     if full_path:
         step = 100 / (len(full_path) - 1)
         keyframes = "@keyframes moveBuddy {\n"
@@ -152,16 +168,9 @@ else:
         keyframes += "}\n"
         animation_css = "animation: moveBuddy 8s linear forwards;"
 
-# =========================================================
-# 순서 텍스트
-# =========================================================
-order_html = "".join([f"{i+1}. {r}<br>" for i, r in enumerate(route)])
-title_text = (
-    f"{client_name} - Moving to Restroom" if bathroom_mode else f"{client_name}'s Medical Route"
-)
 
 # =========================================================
-# CSS 적용
+# ⭐ CSS 적용 (입구에서 시작하도록 초기 위치 고정)
 # =========================================================
 st.markdown(f"""
 <style>
@@ -172,6 +181,8 @@ st.markdown(f"""
     width:100px;
     position:absolute;
     transform:translate(-50%, -50%);
+    top:87%;        /* ⭐ hospital_entrance 위치 */
+    left:40%;
     {animation_css}
 }}
 
@@ -198,18 +209,18 @@ st.html(f"""
 
         <div style="font-size:24px; margin:20px 0 25px;">
           {date_str}<br>
-          {title_text}
+          {client_name}'s Medical Route
         </div>
 
         <div style="font-size:24px; line-height:1.8;">
-          {order_html}
+          {"<br>".join(route)}
         </div>
 
         <img src="data:image/png;base64,{big_buddy}"
              style="width:180px; position:absolute; bottom:0; left:0;">
       </div>
 
-      <!-- map section -->
+      <!-- map -->
       <div style="position:relative;">
         <img src="data:image/png;base64,{map_img}"
              style="width:100%; border-radius:12px;">
