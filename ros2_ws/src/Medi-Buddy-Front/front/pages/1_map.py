@@ -7,6 +7,16 @@ import os
 st.set_page_config(layout="wide")
 
 # =========================================================
+# 🔧 세션 초기화
+# =========================================================
+if "test_target" not in st.session_state:
+    st.session_state.test_target = "none"
+
+if "preview_target" not in st.session_state:
+    st.session_state.preview_target = "none"
+
+
+# =========================================================
 # Base64 이미지 로더
 # =========================================================
 def img64(path):
@@ -21,10 +31,13 @@ big_buddy = img64("assets/body_flag.png")
 small_buddy = img64("assets/body_flag.png")
 map_img = img64("assets/map_line.png")
 
+
 # =========================================================
-# 🗺 병원 지도 좌표 (영어 목적지명)
+# 🗺 병원 지도 좌표
 # =========================================================
 map_points = {
+    "hospital_entrance": {"left": 40.0, "top": 87.0},  # 입구 고정 좌표
+
     "x_ray_room":       {"left": 24.9, "top": 13.9},
     "emergency_room":   {"left": 61.7, "top": 13.9},
     "restroom":         {"left": 90.2, "top": 26.7},
@@ -32,6 +45,14 @@ map_points = {
     "reception":        {"left": 49.7, "top": 48.7},
     "blood_draw_room":  {"left": 65.7, "top": 69.6},
 }
+
+
+def safe_point(key):
+    if key not in map_points:
+        st.sidebar.error(f"⚠ map_points['{key}'] 없음")
+        return None
+    return map_points[key]
+
 
 # =========================================================
 # 🔥 직각 이동 waypoints
@@ -58,8 +79,47 @@ waypoints = {
     ],
 }
 
+# ⭐ 입구 → 각 방 waypoints
+waypoints.update({
+
+    ("hospital_entrance", "pharmacy"): [
+        {"left": 40.0, "top": 60.0},
+        {"left": 19.3, "top": 60.0},
+    ],
+
+    ("hospital_entrance", "reception"): [
+        {"left": 40.0, "top": 60.0},
+        {"left": 49.7, "top": 60.0},
+    ],
+
+    ("hospital_entrance", "blood_draw_room"): [
+        {"left": 50.0, "top": 87.0},
+        {"left": 50.0, "top": 70.0},
+        {"left": 65.7, "top": 70.0},
+    ],
+
+    ("hospital_entrance", "x_ray_room"): [
+        {"left": 40.0, "top": 60.0},
+        {"left": 24.9, "top": 60.0},
+        {"left": 24.9, "top": 13.9},
+    ],
+
+    ("hospital_entrance", "emergency_room"): [
+        {"left": 40.0, "top": 60.0},
+        {"left": 61.7, "top": 60.0},
+        {"left": 61.7, "top": 13.9},
+    ],
+
+    ("hospital_entrance", "restroom"): [
+        {"left": 40.0, "top": 60.0},
+        {"left": 90.2, "top": 60.0},
+    ],
+
+})
+
+
 # =========================================================
-# JSON 상태 로드
+# JSON 상태 불러오기
 # =========================================================
 FILE_PATH = "/tmp/robot_ui_status.json"
 
@@ -74,110 +134,118 @@ def read_status():
 
 data = read_status()
 
-# =========================================================
-# JSON 파싱
-# =========================================================
 client_name = data.get("client_name", "No Name")
 date_str = data.get("date", "")
 destinations_raw = data.get("destinations", "")
-status = data.get("status", "")
 detour_req = data.get("detour", "")
 current_dest = data.get("current_destination", "").strip()
 
-# route 파싱 (공백 제거 필수)
-route = [r.strip() for r in destinations_raw.split(",")] if destinations_raw else []
 
 # =========================================================
-# 우회 모드
+# 🧪 테스트 버튼 패널 (session_state 기반)
 # =========================================================
-bathroom_mode = False
-if detour_req and detour_req != "none":
-    bathroom_mode = True
-    route = ["restroom"]
+st.sidebar.title("🚀 Test Mode")
+
+selected = st.sidebar.radio(
+    "이동 테스트",
+    ["none", "x_ray_room", "emergency_room", "restroom",
+     "pharmacy", "reception", "blood_draw_room"]
+)
+
+# 선택값 → session_state 저장
+st.session_state.test_target = selected
+
 
 # =========================================================
-# 🔥 애니메이션 경로 생성 (현재 단계 기반 + fallback 포함)
+# ───────────── route 구성 로직 ─────────────
+# =========================================================
+if st.session_state.test_target != "none":
+    # 테스트 모드 → route 강제 설정
+    route = ["hospital_entrance", st.session_state.test_target]
+    current_dest = "hospital_entrance"
+    detour_req = "none"
+else:
+    # 실제 JSON route 사용
+    route = [r.strip() for r in destinations_raw.split(",")] if destinations_raw else []
+
+
+# =========================================================
+# 🛰 Waypoint 미리보기 (session_state 기반)
+# =========================================================
+st.sidebar.markdown("---")
+st.sidebar.subheader("🛰 Waypoint 미리보기")
+
+preview = st.sidebar.selectbox(
+    "입구 → 목적지 경로",
+    ["none", "pharmacy", "reception", "blood_draw_room",
+     "x_ray_room", "emergency_room", "restroom"]
+)
+
+st.session_state.preview_target = preview
+
+if preview != "none":
+    key = ("hospital_entrance", preview)
+    st.sidebar.success(f"입구 → {preview} 경로")
+
+    if key in waypoints:
+        st.sidebar.write("**좌표 리스트:**")
+        for i, p in enumerate(waypoints[key]):
+            st.sidebar.write(f"{i+1}. left={p['left']} , top={p['top']}")
+        st.sidebar.code(json.dumps(waypoints[key], indent=2))
+    else:
+        st.sidebar.warning("⚠ waypoints 없음")
+
+
+# =========================================================
+# 🔥 애니메이션 full_path 생성
 # =========================================================
 full_path = []
 keyframes = ""
 animation_css = ""
 
-if bathroom_mode:
-    # 화장실 안내 모드 (점프)
-    pos = map_points["restroom"]
-    keyframes = f"""
-    @keyframes buddyBounce {{
-      0%   {{ top: {pos['top'] - 2}%; left: {pos['left']}%; }}
-      50%  {{ top: {pos['top'] + 2}%; left: {pos['left']}%; }}
-      100% {{ top: {pos['top'] - 2}%; left: {pos['left']}%; }}
-    }}
-    """
-    animation_css = "animation: buddyBounce 1.2s infinite ease-in-out;"
+if len(route) >= 2:
+    s_name = route[0]
+    e_name = route[1]
 
-else:
-    segment_found = False
+    s = safe_point(s_name)
+    e = safe_point(e_name)
 
-    # 1) current_dest 기반 단계 이동
-    if current_dest and current_dest in route:
-        idx = route.index(current_dest)
-        if idx < len(route) - 1:
-            s = route[idx]
-            e = route[idx + 1]
+    if s and e:
+        full_path.append(s)
 
-            full_path.append(map_points[s])
-            if (s, e) in waypoints:
-                full_path.extend(waypoints[(s, e)])
-            full_path.append(map_points[e])
+        if (s_name, e_name) in waypoints:
+            full_path.extend(waypoints[(s_name, e_name)])
 
-            segment_found = True
+        full_path.append(e)
 
-    # 2) fallback: current_dest 없으면 전체 경로 첫 구간 1→2 이동
-    if not segment_found and len(route) >= 2:
-        s = route[0]
-        e = route[1]
 
-        full_path.append(map_points[s])
-        if (s, e) in waypoints:
-            full_path.extend(waypoints[(s, e)])
-        full_path.append(map_points[e])
+# keyframes 생성
+if len(full_path) >= 2:
+    step = 100 / (len(full_path) - 1)
 
-        segment_found = True
+    keyframes = "@keyframes buddyMove {\n"
+    for i, p in enumerate(full_path):
+        keyframes += f"{round(i*step, 2)}% {{ top:{p['top']}%; left:{p['left']}%; }}\n"
+    keyframes += "}\n"
 
-    # 3) 이동 경로가 있다면 keyframes 생성
-    if full_path:
-        step = 100 / (len(full_path) - 1)
-        keyframes = "@keyframes moveBuddy {\n"
-        for i, p in enumerate(full_path):
-            keyframes += f"{round(i * step, 2)}% {{ top:{p['top']}%; left:{p['left']}%; }}\n"
-        keyframes += "}\n"
-        animation_css = "animation: moveBuddy 8s linear forwards;"
+    animation_css = "animation: buddyMove 7s linear forwards;"
 
-# =========================================================
-# 순서 텍스트
-# =========================================================
-order_html = "".join([f"{i+1}. {r}<br>" for i, r in enumerate(route)])
-title_text = (
-    f"{client_name} - Moving to Restroom" if bathroom_mode else f"{client_name}'s Medical Route"
-)
 
 # =========================================================
 # CSS 적용
 # =========================================================
 st.markdown(f"""
 <style>
-@import url('https://fonts.googleapis.com/css2?family=Jua&display=swap');
-* {{ font-family: "Jua"; }}
-
 .small-buddy {{
     width:100px;
     position:absolute;
     transform:translate(-50%, -50%);
     {animation_css}
 }}
-
 {keyframes}
 </style>
 """, unsafe_allow_html=True)
+
 
 # =========================================================
 # UI 출력
@@ -191,25 +259,23 @@ st.html(f"""
                 border-radius:18px; display:grid;
                 grid-template-columns:45% 55%; gap:10px;">
 
-      <!-- left info box -->
+      <!-- left info -->
       <div style="position:relative;">
         <img src="data:image/png;base64,{face_img}" style="width:140px;">
         <div style="font-size:40px; margin-top:10px;">Personal Medical MAP</div>
-
         <div style="font-size:24px; margin:20px 0 25px;">
-          {date_str}<br>
-          {title_text}
+          {date_str}<br>{client_name}
         </div>
 
         <div style="font-size:24px; line-height:1.8;">
-          {order_html}
+          {"<br>".join(route)}
         </div>
 
         <img src="data:image/png;base64,{big_buddy}"
              style="width:180px; position:absolute; bottom:0; left:0;">
       </div>
 
-      <!-- map section -->
+      <!-- map -->
       <div style="position:relative;">
         <img src="data:image/png;base64,{map_img}"
              style="width:100%; border-radius:12px;">
