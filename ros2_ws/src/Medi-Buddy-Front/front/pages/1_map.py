@@ -36,10 +36,8 @@ map_points = {
     "blood_draw_room":  {"left": 65.7, "top": 69.6},
 }
 
-
 def safe_point(key):
     if key not in map_points:
-        st.sidebar.error(f"⚠ map_points['{key}'] 없음")
         return None
     return map_points[key]
 
@@ -71,40 +69,33 @@ waypoints = {
 
 # ⭐ 입구 → 각 방 waypoints
 waypoints.update({
-
     ("hospital_entrance", "pharmacy"): [
         {"left": 40.0, "top": 60.0},
         {"left": 19.3, "top": 60.0},
     ],
-
     ("hospital_entrance", "reception"): [
         {"left": 40.0, "top": 60.0},
         {"left": 49.7, "top": 60.0},
     ],
-
     ("hospital_entrance", "blood_draw_room"): [
         {"left": 50.0, "top": 87.0},
         {"left": 50.0, "top": 70.0},
         {"left": 65.7, "top": 70.0},
     ],
-
     ("hospital_entrance", "x_ray_room"): [
         {"left": 40.0, "top": 60.0},
         {"left": 24.9, "top": 60.0},
         {"left": 24.9, "top": 13.9},
     ],
-
     ("hospital_entrance", "emergency_room"): [
         {"left": 40.0, "top": 60.0},
         {"left": 61.7, "top": 60.0},
         {"left": 61.7, "top": 13.9},
     ],
-
     ("hospital_entrance", "restroom"): [
         {"left": 40.0, "top": 60.0},
         {"left": 90.2, "top": 60.0},
     ],
-
 })
 
 
@@ -131,72 +122,41 @@ destinations_raw = data.get("destinations", "")
 detour_req = data.get("detour", "")
 current_dest = data.get("current_destination", "").strip()
 
-
-# ------------------------------
-# 우회 모드 적용
-# ------------------------------
-bathroom_mode = False
-if detour_req and detour_req != "none":
-    bathroom_mode = True
-    route = ["hospital_entrance", "restroom"]
-
-# =========================================================
-# ───────────── route 구성 로직 ─────────────
-# =========================================================
-
 # 실제 JSON 목적지 리스트 파싱
 dest_list = [r.strip() for r in destinations_raw.split(",")] if destinations_raw else []
 
-# 우회 모드면 아래 route 계산을 건너뜀
+
+# =========================================================
+# ------------------ 우회 모드 적용 ------------------------
+# =========================================================
+bathroom_mode = False
+if detour_req and detour_req != "none":
+    bathroom_mode = True
+    route = ["restroom"]   # bounce only
+
+
+# =========================================================
+# ----------- 정상 모드 route 계산 (핵심 로직) -------------
+# =========================================================
 if not bathroom_mode:
-    # current_destination이 목적지 리스트 안에 있어야 사용 가능
+
     if current_dest and current_dest in dest_list:
 
         idx = dest_list.index(current_dest)
 
-        # 출발지 결정
+        # 첫 번째 목적지일 때는 "입구 → 목적지"
         if idx == 0:
             start_point = "hospital_entrance"
         else:
+            # 그 이후부터는 "이전 목적지 → 현재 목적지"
             start_point = dest_list[idx - 1]
 
-        # 도착지 = 현재 목적지
         end_point = current_dest
-
         route = [start_point, end_point]
 
     else:
-        # fallback: 첫 목적지로만 이동
+        # 목적지 리스트만 있을 경우 → 첫 목적지로 이동
         route = ["hospital_entrance"] + dest_list[:1]
-
-
-
-
-# # =========================================================
-# # 🛰 Waypoint 미리보기 (session_state 기반)
-# # =========================================================
-# st.sidebar.markdown("---")
-# st.sidebar.subheader("🛰 Waypoint 미리보기")
-
-# preview = st.sidebar.selectbox(
-#     "입구 → 목적지 경로",
-#     ["none", "pharmacy", "reception", "blood_draw_room",
-#      "x_ray_room", "emergency_room", "restroom"]
-# )
-
-# st.session_state.preview_target = preview
-
-# if preview != "none":
-#     key = ("hospital_entrance", preview)
-#     st.sidebar.success(f"입구 → {preview} 경로")
-
-#     if key in waypoints:
-#         st.sidebar.write("**좌표 리스트:**")
-#         for i, p in enumerate(waypoints[key]):
-#             st.sidebar.write(f"{i+1}. left={p['left']} , top={p['top']}")
-#         st.sidebar.code(json.dumps(waypoints[key], indent=2))
-#     else:
-#         st.sidebar.warning("⚠ waypoints 없음")
 
 
 # =========================================================
@@ -206,22 +166,7 @@ full_path = []
 keyframes = ""
 animation_css = ""
 
-if len(route) >= 2:
-    s_name = route[0]
-    e_name = route[1]
-
-    s = safe_point(s_name)
-    e = safe_point(e_name)
-
-    if s and e:
-        full_path.append(s)
-
-        if (s_name, e_name) in waypoints:
-            full_path.extend(waypoints[(s_name, e_name)])
-
-        full_path.append(e)
-
-# 바운스 애니메이션
+# 우회 모드 → bounce만 생성하고 이동 경로 없음
 if bathroom_mode:
     pos = safe_point("restroom")
     keyframes = f"""
@@ -232,7 +177,24 @@ if bathroom_mode:
     }}
     """
     animation_css = "animation: buddyBounce 1.2s infinite ease-in-out;"
+
 else:
+    # 이동 애니메이션
+    if len(route) >= 2:
+        s_name = route[0]
+        e_name = route[1]
+
+        s = safe_point(s_name)
+        e = safe_point(e_name)
+
+        if s and e:
+            full_path.append(s)
+
+            if (s_name, e_name) in waypoints:
+                full_path.extend(waypoints[(s_name, e_name)])
+
+            full_path.append(e)
+
     # keyframes 생성
     if len(full_path) >= 2:
         step = 100 / (len(full_path) - 1)
@@ -244,11 +206,7 @@ else:
 
         animation_css = "animation: buddyMove 7s linear forwards;"
 
-# ---------- QR START EVENT ----------
-if status == "audio_incoming":
-    # 즉시 3-3_follow_stage 로 전환
-    st.switch_page("pages/3-3_follow_stage.py")
-    
+
 # =========================================================
 # CSS 적용
 # =========================================================
@@ -256,9 +214,17 @@ st.markdown("""
 <style>
 @import url('https://fonts.googleapis.com/css2?family=Jua&display=swap');
 * { font-family: 'Jua'; }
-</style>
-""", unsafe_allow_html=True)
 
+.small-buddy {
+    width:100px;
+    position:absolute;
+    transform:translate(-50%, -50%);
+    %s
+}
+
+%s
+</style>
+""" % (animation_css, keyframes), unsafe_allow_html=True)
 
 
 # =========================================================
@@ -280,11 +246,6 @@ title_text = "Personal Medical MAP"
 if bathroom_mode:
     title_text = "Moving to Restroom"
 
-order_html = "".join([
-    f"{i+1}. {korean_names.get(r, r)}<br>"
-    for i, r in enumerate(route[1:])    # 첫 위치(hospital_entrance)는 생략
-])
-
 
 st.html(f"""
 <div style="display:flex; justify-content:center; margin-top:40px;">
@@ -304,10 +265,10 @@ st.html(f"""
           {date_str}<br>{client_name}
         </div>
 
-        <div style="font-size:24px; line-height:1.8;">
-        {order_html}
+        <div style="font-size:24px; margin-top:20px; line-height:1.8;">
+            {"<br>".join(display_all_dest)}
         </div>
-        
+
         <img src="data:image/png;base64,{big_buddy}"
              style="width:180px; position:absolute; bottom:0; left:0;">
       </div>
@@ -316,7 +277,8 @@ st.html(f"""
       <div style="position:relative;">
         <img src="data:image/png;base64,{map_img}"
              style="width:100%; border-radius:12px;">
-        <img src="data:image/png;base64,{small_buddy}" class="small-buddy">
+        <img src="data:image/png;base64,{small_buddy}"
+             class="small-buddy">
       </div>
 
     </div>
