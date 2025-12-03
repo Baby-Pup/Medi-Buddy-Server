@@ -244,7 +244,7 @@ display_all_dest = [korean_names.get(d, d) for d in dest_list]
 
 title_text = "Personal Medical MAP"
 if bathroom_mode:
-    title_text = "Moving to Restroom"
+    title_text = "화장실로 이동 중입니다."
 
 
 st.html(f"""
@@ -262,7 +262,7 @@ st.html(f"""
         <div style="font-size:40px; margin-top:10px;">{title_text}</div>
 
         <div style="font-size:24px; margin:20px 0 25px;">
-          {date_str}<br>{client_name}
+          {date_str}<br>{client_name} 님
         </div>
 
         <div style="font-size:24px; margin-top:20px; line-height:1.8;">
