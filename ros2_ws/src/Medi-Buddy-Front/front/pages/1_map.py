@@ -7,16 +7,6 @@ import os
 st.set_page_config(layout="wide")
 
 # =========================================================
-# 🔧 세션 초기화
-# =========================================================
-if "test_target" not in st.session_state:
-    st.session_state.test_target = "none"
-
-if "preview_target" not in st.session_state:
-    st.session_state.preview_target = "none"
-
-
-# =========================================================
 # Base64 이미지 로더
 # =========================================================
 def img64(path):
@@ -134,6 +124,7 @@ def read_status():
 
 data = read_status()
 
+status = data.get("status", "")
 client_name = data.get("client_name", "No Name")
 date_str = data.get("date", "")
 destinations_raw = data.get("destinations", "")
@@ -141,59 +132,71 @@ detour_req = data.get("detour", "")
 current_dest = data.get("current_destination", "").strip()
 
 
-# =========================================================
-# 🧪 테스트 버튼 패널 (session_state 기반)
-# =========================================================
-st.sidebar.title("🚀 Test Mode")
-
-selected = st.sidebar.radio(
-    "이동 테스트",
-    ["none", "x_ray_room", "emergency_room", "restroom",
-     "pharmacy", "reception", "blood_draw_room"]
-)
-
-# 선택값 → session_state 저장
-st.session_state.test_target = selected
-
+# ------------------------------
+# 우회 모드 적용
+# ------------------------------
+bathroom_mode = False
+if detour_req and detour_req != "none":
+    bathroom_mode = True
+    route = ["hospital_entrance", "restroom"]
 
 # =========================================================
 # ───────────── route 구성 로직 ─────────────
 # =========================================================
-if st.session_state.test_target != "none":
-    # 테스트 모드 → route 강제 설정
-    route = ["hospital_entrance", st.session_state.test_target]
-    current_dest = "hospital_entrance"
-    detour_req = "none"
-else:
-    # 실제 JSON route 사용
-    route = [r.strip() for r in destinations_raw.split(",")] if destinations_raw else []
 
+# 실제 JSON 목적지 리스트 파싱
+dest_list = [r.strip() for r in destinations_raw.split(",")] if destinations_raw else []
 
-# =========================================================
-# 🛰 Waypoint 미리보기 (session_state 기반)
-# =========================================================
-st.sidebar.markdown("---")
-st.sidebar.subheader("🛰 Waypoint 미리보기")
+# 우회 모드면 아래 route 계산을 건너뜀
+if not bathroom_mode:
+    # current_destination이 목적지 리스트 안에 있어야 사용 가능
+    if current_dest and current_dest in dest_list:
 
-preview = st.sidebar.selectbox(
-    "입구 → 목적지 경로",
-    ["none", "pharmacy", "reception", "blood_draw_room",
-     "x_ray_room", "emergency_room", "restroom"]
-)
+        idx = dest_list.index(current_dest)
 
-st.session_state.preview_target = preview
+        # 출발지 결정
+        if idx == 0:
+            start_point = "hospital_entrance"
+        else:
+            start_point = dest_list[idx - 1]
 
-if preview != "none":
-    key = ("hospital_entrance", preview)
-    st.sidebar.success(f"입구 → {preview} 경로")
+        # 도착지 = 현재 목적지
+        end_point = current_dest
 
-    if key in waypoints:
-        st.sidebar.write("**좌표 리스트:**")
-        for i, p in enumerate(waypoints[key]):
-            st.sidebar.write(f"{i+1}. left={p['left']} , top={p['top']}")
-        st.sidebar.code(json.dumps(waypoints[key], indent=2))
+        route = [start_point, end_point]
+
     else:
-        st.sidebar.warning("⚠ waypoints 없음")
+        # fallback: 첫 목적지로만 이동
+        route = ["hospital_entrance"] + dest_list[:1]
+
+
+
+
+# # =========================================================
+# # 🛰 Waypoint 미리보기 (session_state 기반)
+# # =========================================================
+# st.sidebar.markdown("---")
+# st.sidebar.subheader("🛰 Waypoint 미리보기")
+
+# preview = st.sidebar.selectbox(
+#     "입구 → 목적지 경로",
+#     ["none", "pharmacy", "reception", "blood_draw_room",
+#      "x_ray_room", "emergency_room", "restroom"]
+# )
+
+# st.session_state.preview_target = preview
+
+# if preview != "none":
+#     key = ("hospital_entrance", preview)
+#     st.sidebar.success(f"입구 → {preview} 경로")
+
+#     if key in waypoints:
+#         st.sidebar.write("**좌표 리스트:**")
+#         for i, p in enumerate(waypoints[key]):
+#             st.sidebar.write(f"{i+1}. left={p['left']} , top={p['top']}")
+#         st.sidebar.code(json.dumps(waypoints[key], indent=2))
+#     else:
+#         st.sidebar.warning("⚠ waypoints 없음")
 
 
 # =========================================================
@@ -218,38 +221,71 @@ if len(route) >= 2:
 
         full_path.append(e)
 
+# 바운스 애니메이션
+if bathroom_mode:
+    pos = safe_point("restroom")
+    keyframes = f"""
+    @keyframes buddyBounce {{
+        0%   {{ top:{pos['top'] - 2}%; left:{pos['left']}%; }}
+        50%  {{ top:{pos['top'] + 2}%; left:{pos['left']}%; }}
+        100% {{ top:{pos['top'] - 2}%; left:{pos['left']}%; }}
+    }}
+    """
+    animation_css = "animation: buddyBounce 1.2s infinite ease-in-out;"
+else:
+    # keyframes 생성
+    if len(full_path) >= 2:
+        step = 100 / (len(full_path) - 1)
 
-# keyframes 생성
-if len(full_path) >= 2:
-    step = 100 / (len(full_path) - 1)
+        keyframes = "@keyframes buddyMove {\n"
+        for i, p in enumerate(full_path):
+            keyframes += f"{round(i*step, 2)}% {{ top:{p['top']}%; left:{p['left']}%; }}\n"
+        keyframes += "}\n"
 
-    keyframes = "@keyframes buddyMove {\n"
-    for i, p in enumerate(full_path):
-        keyframes += f"{round(i*step, 2)}% {{ top:{p['top']}%; left:{p['left']}%; }}\n"
-    keyframes += "}\n"
+        animation_css = "animation: buddyMove 7s linear forwards;"
 
-    animation_css = "animation: buddyMove 7s linear forwards;"
-
-
+# ---------- QR START EVENT ----------
+if status == "audio_incoming":
+    # 즉시 3-3_follow_stage 로 전환
+    st.switch_page("pages/3-3_follow_stage.py")
+    
 # =========================================================
 # CSS 적용
 # =========================================================
-st.markdown(f"""
+st.markdown("""
 <style>
-.small-buddy {{
-    width:100px;
-    position:absolute;
-    transform:translate(-50%, -50%);
-    {animation_css}
-}}
-{keyframes}
+@import url('https://fonts.googleapis.com/css2?family=Jua&display=swap');
+* { font-family: 'Jua'; }
 </style>
 """, unsafe_allow_html=True)
+
 
 
 # =========================================================
 # UI 출력
 # =========================================================
+korean_names = {
+    "restroom": "화장실",
+    "x_ray_room": "X-ray실",
+    "emergency_room": "응급실",
+    "pharmacy": "약국",
+    "reception": "수납처",
+    "blood_draw_room": "채혈실",
+    "hospital_entrance": "병원 입구"
+}
+
+display_all_dest = [korean_names.get(d, d) for d in dest_list]
+
+title_text = "Personal Medical MAP"
+if bathroom_mode:
+    title_text = "Moving to Restroom"
+
+order_html = "".join([
+    f"{i+1}. {korean_names.get(r, r)}<br>"
+    for i, r in enumerate(route[1:])    # 첫 위치(hospital_entrance)는 생략
+])
+
+
 st.html(f"""
 <div style="display:flex; justify-content:center; margin-top:40px;">
   <div style="width:92%; max-width:1400px; background:#0E2C55;
@@ -262,15 +298,16 @@ st.html(f"""
       <!-- left info -->
       <div style="position:relative;">
         <img src="data:image/png;base64,{face_img}" style="width:140px;">
-        <div style="font-size:40px; margin-top:10px;">Personal Medical MAP</div>
+        <div style="font-size:40px; margin-top:10px;">{title_text}</div>
+
         <div style="font-size:24px; margin:20px 0 25px;">
           {date_str}<br>{client_name}
         </div>
 
         <div style="font-size:24px; line-height:1.8;">
-          {"<br>".join(route)}
+        {order_html}
         </div>
-
+        
         <img src="data:image/png;base64,{big_buddy}"
              style="width:180px; position:absolute; bottom:0; left:0;">
       </div>
