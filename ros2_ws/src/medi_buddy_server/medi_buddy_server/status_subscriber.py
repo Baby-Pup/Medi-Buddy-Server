@@ -115,9 +115,6 @@ class StatusSubscriber(Node):
     def reset_status(self):
         time.sleep(0.2)
         self.current_status = "idle"
-        self.current_ocr_brand_name = ""
-        self.current_llm_result = ""
-        self.detour = ""
         self.write_json()
         self.get_logger().info("[RESET]")
 
