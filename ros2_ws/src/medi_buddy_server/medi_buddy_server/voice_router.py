@@ -134,6 +134,13 @@ class OcrResultSubscriber(Node):
 
 client_name = None
 
+medical_records = {'정지아': ['발열', '기침', '코로나 의심'],
+                   '채서린': ['고혈압', '안압 상승'],
+                   '염한결': ['뇌혈관 질환'],
+                   '황혜윤': ['빈맥', '저혈압'],
+                   '박현욱': ['심한 스트레스', '불면증'],
+                   '정지아': ['근육 긴장']}
+
 class ClientNameSubscriber(Node):
     def __init__(self):
         super().__init__("client_name_subscriber")
@@ -152,11 +159,76 @@ class ClientNameSubscriber(Node):
 
 
 
+repeat = False
+current_destination = None
+
+class CurrentDestSubscriber(Node):
+    def __init__(self):
+        super().__init__("current_dest_subscriber")
+        self.subscription = self.create_subscription(
+            String,
+            "current_destination",
+            self.callback_current_dest,
+            10
+        )
+        self.get_logger().info("📥 현재 목적지 구독 시작 (/current_destination)")
+
+    def callback_current_dest(self, msg):
+        global current_destination, repeat
+        current_destination = msg.data
+        message = ""
+
+        room_map = {
+                "X-ray실": "x_ray_room",
+                "응급실": "emergency_room",
+                "채혈실": "blood_draw_room",
+                "약국": "pharmacy",
+                "수납": "reception",
+                "화장실": "restroom"
+            }
+
+        for kor, eng in room_map.items():
+            if eng == current_destination:
+                current_destination = kor
+                message = f"{current_destination} 안내를 시작합니다"
+                break
+        if not repeat:
+            wav_path = tts.make_tts(message)
+            tts_pub_node.publish_wav(wav_path)
+        else:
+            repeat = False
+        self.get_logger().info(f"📌 현재 목적지 수신: {current_destination}")
+
+
+
+class ArrivalSubscriber(Node):
+    def __init__(self):
+        super().__init__("arrival_subscriber")
+        self.subscription = self.create_subscription(
+            Bool,
+            "destination_arrival",
+            self.callback_arrival,
+            10
+        )
+        self.get_logger().info("📥 목적지 도착 여부 구독 시작 (/destination_arrival)")
+
+    def callback_arrival(self, msg):
+        global current_destination
+        arrival = msg.data
+        if arrival:
+            message = f"{current_destination} 에 도착했습니다."
+            wav_path = tts.make_tts(message)
+            tts_pub_node.publish_wav(wav_path)
+
+        self.get_logger().info(f"📌 목적지 도착 여부 수신: {arrival}")
+
+
+
 ########################################################
 # 6. 트리 라우팅
 ########################################################
 def tree(voice):
-    global latest_ocr_text
+    global latest_ocr_text, repeat
 
     mode = predict(voice)['label']
     print("분류 결과:", mode)
@@ -184,6 +256,7 @@ def tree(voice):
             for kor, eng in room_map.items():
                 if kor in voice:
                     message = f"{kor} 안내를 시작합니다"
+                    repeat = True
                     detour_pub_node.publish_destination(eng)
                     break
 
@@ -201,19 +274,20 @@ def tree(voice):
             ### OCR 텍스트가 들어올 때까지 기다림
             #    - 비동기 ROS 구조에서 polling 방식으로
             wait_t = 0
-            while latest_ocr_text is None and wait_t < 30:
+            while latest_ocr_text is None and wait_t < 300:
                 time.sleep(0.2)
                 wait_t += 0.2
 
             if latest_ocr_text is None:
                 message = "문서를 인식하지 못했습니다."
             else:
-                sys_message = "약 정보를 효능, 부작용, 주의 사항 중심으로 3문장의 쉬운 말로 설명해주세요."
+                sys_message = "약 정보를 효능, 부작용, 주의 사항 중심으로 3문장의 쉬운 존댓말로 설명해주세요."
                 message = llm(sys_message, query=latest_ocr_text)
+                latest_ocr_text = None
 
         case 3:
             status_pub_node.publish_status("question_drug")
-            sys_message = "약 정보를 효능, 부작용, 주의 사항 중심으로 3문장의 쉬운 말로 설명해주세요."
+            sys_message = "약 정보를 효능, 부작용, 주의 사항 중심으로 3문장의 쉬운 존댓말로 설명해주세요."
             message = llm(sys_message, query=voice)
 
         case 4:
@@ -355,6 +429,8 @@ def main(args=None):
     detour_pub_node = DetourPublisher()
     ocr_result_node = OcrResultSubscriber()
     client_name_node = ClientNameSubscriber()
+    current_dest_node = CurrentDestSubscriber()
+    arrival_node = ArrivalSubscriber()
 
     executor = rclpy.executors.MultiThreadedExecutor()
     executor.add_node(voice_node)
@@ -365,6 +441,8 @@ def main(args=None):
     executor.add_node(detour_pub_node)
     executor.add_node(ocr_result_node)
     executor.add_node(client_name_node)
+    executor.add_node(current_dest_node)
+    executor.add_node(arrival_node)
 
     try:
         executor.spin()
@@ -379,6 +457,8 @@ def main(args=None):
         detour_pub_node.destroy_node()
         ocr_result_node.destroy_node()
         client_name_node.destroy_node()
+        current_dest_node.destroy_node()
+        arrival_node.destroy_node()
         rclpy.shutdown()
 
 
