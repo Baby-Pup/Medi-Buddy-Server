@@ -109,7 +109,7 @@ class OcrNode(Node):
 
         # ⏱️ 추가: OCR 타임아웃
         self.ocr_start_time = None
-        self.ocr_timeout = 30.0   # 30초
+        self.ocr_timeout = 300.0   # 30초
 
         # ROS 설정
         self.create_subscription(Bool, "/ocr_request", self.ocr_request_callback, 10)
@@ -151,7 +151,7 @@ class OcrNode(Node):
         if not self.ocr_request:
             return
 
-        # 30초 타임아웃 체크
+        # 🔥 20초 타임아웃 체크
         if time.time() - self.ocr_start_time > self.ocr_timeout:
             self.get_logger().info("⛔ OCR 시간 초과(30초) → OCR 실패 처리")
 
